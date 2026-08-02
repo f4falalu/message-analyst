@@ -106,6 +106,12 @@ function normalise(input: unknown): ExtractedDoc {
 
   const confidence = coerceNumber(raw["confidence"]);
 
+  const fcRaw = (raw["field_confidence"] ?? {}) as Record<string, unknown>;
+  const clamp = (value: unknown): number | null => {
+    const n = coerceNumber(value);
+    return n === null ? null : Math.max(0, Math.min(1, n));
+  };
+
   return {
     doc_type: docType,
     facility_name: str("facility_name"),
@@ -119,6 +125,14 @@ function normalise(input: unknown): ExtractedDoc {
     reference: str("reference"),
     raw_text: typeof raw["raw_text"] === "string" ? raw["raw_text"].slice(0, 8000) : "",
     confidence: confidence === null ? 0.5 : Math.max(0, Math.min(1, confidence)),
+    field_confidence: {
+      facility_name: clamp(fcRaw["facility_name"]),
+      items: clamp(fcRaw["items"]),
+      total_amount: clamp(fcRaw["total_amount"]),
+      document_date: clamp(fcRaw["document_date"]),
+      payment_date: clamp(fcRaw["payment_date"]),
+      contact: clamp(fcRaw["contact"]),
+    },
   };
 }
 
