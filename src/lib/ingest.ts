@@ -131,7 +131,7 @@ export async function ingestZip(
     }[] = [];
 
     await runPool(mediaEntries, UPLOAD_CONCURRENCY, async (entry) => {
-      const getData = (entry as Entry & { getData?: NonNullable<Entry["getData"]> }).getData;
+      const getData = (entry as unknown as { getData?: (writer: BlobWriter) => Promise<Blob> }).getData;
       if (!getData) return;
       const filename = baseName(entry.filename);
       const mime = guessMimeType(filename);
