@@ -14,7 +14,309 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      attachments: {
+        Row: {
+          created_at: string
+          extracted: Json | null
+          filename: string
+          id: string
+          import_id: string
+          message_seq: number | null
+          mime_type: string | null
+          ocr_error: string | null
+          ocr_status: string
+          processed_at: string | null
+          raw_text: string | null
+          size_bytes: number | null
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          extracted?: Json | null
+          filename: string
+          id?: string
+          import_id: string
+          message_seq?: number | null
+          mime_type?: string | null
+          ocr_error?: string | null
+          ocr_status?: string
+          processed_at?: string | null
+          raw_text?: string | null
+          size_bytes?: number | null
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          extracted?: Json | null
+          filename?: string
+          id?: string
+          import_id?: string
+          message_seq?: number | null
+          mime_type?: string | null
+          ocr_error?: string | null
+          ocr_status?: string
+          processed_at?: string | null
+          raw_text?: string | null
+          size_bytes?: number | null
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attachments_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contacts: {
+        Row: {
+          created_at: string
+          display_name: string
+          id: string
+          import_id: string
+          message_count: number
+          phone: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          id?: string
+          import_id: string
+          message_count?: number
+          phone?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          import_id?: string
+          message_count?: number
+          phone?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      imports: {
+        Row: {
+          chat_parsed: boolean
+          created_at: string
+          filename: string
+          id: string
+          message_count: number
+          notes: string | null
+          status: string
+          total_files: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          chat_parsed?: boolean
+          created_at?: string
+          filename: string
+          id?: string
+          message_count?: number
+          notes?: string | null
+          status?: string
+          total_files?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          chat_parsed?: boolean
+          created_at?: string
+          filename?: string
+          id?: string
+          message_count?: number
+          notes?: string | null
+          status?: string
+          total_files?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      messages: {
+        Row: {
+          attachment_filename: string | null
+          body: string | null
+          created_at: string
+          id: string
+          import_id: string
+          sender: string | null
+          sender_phone: string | null
+          sent_at: string | null
+          seq: number
+          user_id: string
+        }
+        Insert: {
+          attachment_filename?: string | null
+          body?: string | null
+          created_at?: string
+          id?: string
+          import_id: string
+          sender?: string | null
+          sender_phone?: string | null
+          sent_at?: string | null
+          seq: number
+          user_id: string
+        }
+        Update: {
+          attachment_filename?: string | null
+          body?: string | null
+          created_at?: string
+          id?: string
+          import_id?: string
+          sender?: string | null
+          sender_phone?: string | null
+          sent_at?: string | null
+          seq?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      record_sources: {
+        Row: {
+          attachment_id: string | null
+          created_at: string
+          id: string
+          kind: string
+          message_id: string | null
+          record_id: string
+          user_id: string
+        }
+        Insert: {
+          attachment_id?: string | null
+          created_at?: string
+          id?: string
+          kind: string
+          message_id?: string | null
+          record_id: string
+          user_id: string
+        }
+        Update: {
+          attachment_id?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          message_id?: string | null
+          record_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "record_sources_attachment_id_fkey"
+            columns: ["attachment_id"]
+            isOneToOne: false
+            referencedRelation: "attachments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "record_sources_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "record_sources_record_id_fkey"
+            columns: ["record_id"]
+            isOneToOne: false
+            referencedRelation: "request_records"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      request_records: {
+        Row: {
+          amount_paid: number | null
+          confidence: number | null
+          created_at: string
+          currency: string | null
+          facility_name: string | null
+          id: string
+          import_id: string
+          items: Json
+          needs_review: boolean
+          notes: string | null
+          payment_date: string | null
+          request_date: string | null
+          requester_name: string | null
+          requester_phone: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount_paid?: number | null
+          confidence?: number | null
+          created_at?: string
+          currency?: string | null
+          facility_name?: string | null
+          id?: string
+          import_id: string
+          items?: Json
+          needs_review?: boolean
+          notes?: string | null
+          payment_date?: string | null
+          request_date?: string | null
+          requester_name?: string | null
+          requester_phone?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount_paid?: number | null
+          confidence?: number | null
+          created_at?: string
+          currency?: string | null
+          facility_name?: string | null
+          id?: string
+          import_id?: string
+          items?: Json
+          needs_review?: boolean
+          notes?: string | null
+          payment_date?: string | null
+          request_date?: string | null
+          requester_name?: string | null
+          requester_phone?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "request_records_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
