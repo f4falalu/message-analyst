@@ -29,7 +29,7 @@ export type Database = {
           raw_text: string | null
           size_bytes: number | null
           storage_path: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -45,7 +45,7 @@ export type Database = {
           raw_text?: string | null
           size_bytes?: number | null
           storage_path: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -61,7 +61,7 @@ export type Database = {
           raw_text?: string | null
           size_bytes?: number | null
           storage_path?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -81,7 +81,7 @@ export type Database = {
           import_id: string
           message_count: number
           phone: string | null
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -90,7 +90,7 @@ export type Database = {
           import_id: string
           message_count?: number
           phone?: string | null
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -99,7 +99,7 @@ export type Database = {
           import_id?: string
           message_count?: number
           phone?: string | null
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -122,7 +122,7 @@ export type Database = {
           status: string
           total_files: number
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           chat_parsed?: boolean
@@ -134,7 +134,7 @@ export type Database = {
           status?: string
           total_files?: number
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           chat_parsed?: boolean
@@ -146,7 +146,7 @@ export type Database = {
           status?: string
           total_files?: number
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -161,7 +161,7 @@ export type Database = {
           sender_phone: string | null
           sent_at: string | null
           seq: number
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           attachment_filename?: string | null
@@ -173,7 +173,7 @@ export type Database = {
           sender_phone?: string | null
           sent_at?: string | null
           seq: number
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           attachment_filename?: string | null
@@ -185,7 +185,7 @@ export type Database = {
           sender_phone?: string | null
           sent_at?: string | null
           seq?: number
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -205,7 +205,7 @@ export type Database = {
           kind: string
           message_id: string | null
           record_id: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           attachment_id?: string | null
@@ -214,7 +214,7 @@ export type Database = {
           kind: string
           message_id?: string | null
           record_id: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           attachment_id?: string | null
@@ -223,7 +223,7 @@ export type Database = {
           kind?: string
           message_id?: string | null
           record_id?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -267,7 +267,7 @@ export type Database = {
           requester_phone: string | null
           status: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           amount_paid?: number | null
@@ -286,7 +286,7 @@ export type Database = {
           requester_phone?: string | null
           status?: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           amount_paid?: number | null
@@ -305,7 +305,7 @@ export type Database = {
           requester_phone?: string | null
           status?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
