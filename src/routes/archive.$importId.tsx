@@ -647,9 +647,9 @@ function ArchivePage() {
                         <TableCell className="text-sm">{formatConfidence(event.confidence)}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {event.field_confidence
-                            ? Object.entries(event.field_confidence)
-                                .filter(([, value]) => value !== null)
-                                .map(([key, value]) => `${key} ${formatConfidence(value)}`)
+                            ? Object.entries(event.field_confidence as Record<string, number | null>)
+                                .filter(([, value]) => typeof value === "number")
+                                .map(([key, value]) => `${key} ${formatConfidence(value as number)}`)
                                 .join(" · ") || "—"
                             : "—"}
                         </TableCell>
