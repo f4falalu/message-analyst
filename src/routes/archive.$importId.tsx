@@ -61,6 +61,33 @@ type MessageRow = {
 
 type Counts = { pending: number; done: number; error: number; skipped: number };
 
+type RunRow = {
+  id: string;
+  status: string;
+  concurrency: number;
+  chunk_size: number;
+  total_files: number;
+  processed_count: number;
+  failed_count: number;
+  notes: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+type EventRow = {
+  id: string;
+  filename: string;
+  outcome: string;
+  doc_type: string | null;
+  confidence: number | null;
+  field_confidence: Record<string, number | null> | null;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+};
+
+
+
 export const Route = createFileRoute("/archive/$importId")({
   head: () => ({
     meta: [
