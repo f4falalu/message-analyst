@@ -130,11 +130,13 @@ export async function ingestZip(
       ocr_status: string;
     }[] = [];
 
-    await runPool(mediaEntries, UPLOAD_CONCURRENCY, async (entry: Entry) => {
-      if (!entry.getData) return;
+    await runPool(mediaEntries, UPLOAD_CONCURRENCY, async (entry) => {
+      const getData = (entry as Entry & { getData?: NonNullable<Entry["getData"]> }).getData;
+      if (!getData) return;
       const filename = baseName(entry.filename);
       const mime = guessMimeType(filename);
-      const blob = await entry.getData(new BlobWriter(mime));
+      const blob = await getData.call(entry, new BlobWriter(mime));
+
       const storagePath = `${userId}/${importId}/${filename}`;
 
       const { error } = await supabase.storage.from(BUCKET).upload(storagePath, blob, {
