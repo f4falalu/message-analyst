@@ -72,7 +72,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               ocr_status: "done",
               ocr_error: null,
               raw_text: extracted.raw_text,
-              extracted: extracted as unknown as Record<string, unknown>,
+              extracted: extracted as unknown as Json,
               processed_at: new Date().toISOString(),
             })
             .eq("id", attachment.id);
@@ -176,7 +176,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
             import_id: data.importId,
             user_id: context.userId,
             facility_name: record.facility_name,
-            items: record.items as unknown as Record<string, unknown>[],
+            items: record.items as unknown as Json,
             amount_paid: record.amount_paid,
             currency: record.currency,
             request_date: record.request_date,
