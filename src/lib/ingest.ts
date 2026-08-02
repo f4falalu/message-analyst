@@ -33,9 +33,6 @@ export async function ingestZip(
   file: File,
   onProgress: (progress: IngestProgress) => void,
 ): Promise<{ importId: string; messages: number; attachments: number; readable: number }> {
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) throw new Error("You need to be signed in to import an archive.");
-  const userId = userData.user.id;
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
 
@@ -59,7 +56,6 @@ export async function ingestZip(
   const { data: importRow, error: importError } = await supabase
     .from("imports")
     .insert({
-      user_id: userId,
       filename: file.name,
       status: "uploading",
       total_files: mediaEntries.length,
@@ -85,8 +81,7 @@ export async function ingestZip(
       const { error } = await supabase.from("messages").insert(
         slice.map((message) => ({
           import_id: importId,
-          user_id: userId,
-          seq: message.seq,
+              seq: message.seq,
           sent_at: message.sent_at,
           sender: message.sender,
           body: message.body,
@@ -104,7 +99,7 @@ export async function ingestZip(
 
     if (parsed.contacts.length) {
       const { error } = await supabase.from("contacts").insert(
-        parsed.contacts.map((contact) => ({ ...contact, import_id: importId, user_id: userId })),
+        parsed.contacts.map((contact) => ({ ...contact, import_id: importId })),
       );
       if (error) throw new Error(error.message);
     }
@@ -121,7 +116,6 @@ export async function ingestZip(
     let readable = 0;
     const rows: {
       import_id: string;
-      user_id: string;
       filename: string;
       storage_path: string;
       mime_type: string;
@@ -137,7 +131,7 @@ export async function ingestZip(
       const mime = guessMimeType(filename);
       const blob = await getData.call(entry, new BlobWriter(mime));
 
-      const storagePath = `${userId}/${importId}/${filename}`;
+      const storagePath = `${importId}/${filename}`;
 
       const { error } = await supabase.storage.from(BUCKET).upload(storagePath, blob, {
         contentType: mime,
@@ -149,8 +143,7 @@ export async function ingestZip(
       if (canRead) readable += 1;
       rows.push({
         import_id: importId,
-        user_id: userId,
-        filename,
+          filename,
         storage_path: storagePath,
         mime_type: mime,
         size_bytes: blob.size,

@@ -2,7 +2,6 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
 import { ingestZip, type IngestProgress } from "@/lib/ingest";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -48,7 +47,6 @@ const STEPS = [
 ];
 
 function Home() {
-  const { user, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<IngestProgress | null>(null);
@@ -56,10 +54,6 @@ function Home() {
   const [imports, setImports] = useState<ImportRow[]>([]);
 
   useEffect(() => {
-    if (!user) {
-      setImports([]);
-      return;
-    }
     supabase
       .from("imports")
       .select("id, filename, status, message_count, total_files, created_at")
@@ -68,7 +62,7 @@ function Home() {
         if (error) toast.error(error.message);
         else setImports(data ?? []);
       });
-  }, [user, busy]);
+  }, [busy]);
 
   const handleFile = async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".zip")) {
@@ -98,18 +92,7 @@ function Home() {
       <header className="border-b border-border/60">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
           <span className="font-serif text-xl tracking-tight text-foreground">Request Ledger</span>
-          {loading ? null : user ? (
-            <div className="flex items-center gap-3">
-              <span className="hidden text-sm text-muted-foreground sm:inline">{user.email}</span>
-              <Button variant="ghost" size="sm" onClick={() => signOut()}>
-                Sign out
-              </Button>
-            </div>
-          ) : (
-            <Button asChild size="sm">
-              <Link to="/auth">Sign in</Link>
-            </Button>
-          )}
+          <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Internal tool</span>
         </div>
       </header>
 
@@ -125,7 +108,6 @@ function Home() {
         </p>
 
         <div className="mt-10">
-          {user ? (
             <div className="max-w-2xl rounded-xl border border-dashed border-border bg-card/60 p-8">
               <input
                 ref={inputRef}
@@ -159,11 +141,7 @@ function Home() {
                 </div>
               )}
             </div>
-          ) : (
-            <Button asChild size="lg">
-              <Link to="/auth">Sign in to import an export</Link>
-            </Button>
-          )}
+
         </div>
       </section>
 
@@ -179,9 +157,9 @@ function Home() {
         </div>
       </section>
 
-      {user && imports.length > 0 ? (
+      {imports.length > 0 ? (
         <section className="mx-auto max-w-6xl px-6 py-14">
-          <h2 className="font-serif text-2xl text-foreground">Your imports</h2>
+          <h2 className="font-serif text-2xl text-foreground">Imports</h2>
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {imports.map((row) => (
               <Card key={row.id} className="border-border/60">

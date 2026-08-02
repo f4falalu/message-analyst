@@ -10,65 +10,43 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
-import { Route as AuthRouteImport } from './routes/auth'
-import { Route as AuthenticatedArchiveImportIdRouteImport } from './routes/_authenticated/archive.$importId'
+import { Route as ArchiveImportIdRouteImport } from './routes/archive.$importId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
-  id: '/_authenticated',
+const ArchiveImportIdRoute = ArchiveImportIdRouteImport.update({
+  id: '/archive/$importId',
+  path: '/archive/$importId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthRoute = AuthRouteImport.update({
-  id: '/auth',
-  path: '/auth',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedArchiveImportIdRoute =
-  AuthenticatedArchiveImportIdRouteImport.update({
-    id: '/archive/$importId',
-    path: '/archive/$importId',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/auth': typeof AuthRoute
-  '/archive/$importId': typeof AuthenticatedArchiveImportIdRoute
+  '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/auth': typeof AuthRoute
-  '/archive/$importId': typeof AuthenticatedArchiveImportIdRoute
+  '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
-  '/auth': typeof AuthRoute
-  '/_authenticated/archive/$importId': typeof AuthenticatedArchiveImportIdRoute
+  '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/archive/$importId'
+  fullPaths: '/' | '/archive/$importId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/archive/$importId'
-  id:
-    | '__root__'
-    | '/'
-    | '/_authenticated'
-    | '/auth'
-    | '/_authenticated/archive/$importId'
+  to: '/' | '/archive/$importId'
+  id: '__root__' | '/' | '/archive/$importId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
-  AuthRoute: typeof AuthRoute
+  ArchiveImportIdRoute: typeof ArchiveImportIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -80,45 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated': {
-      id: '/_authenticated'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AuthenticatedRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/auth': {
-      id: '/auth'
-      path: '/auth'
-      fullPath: '/auth'
-      preLoaderRoute: typeof AuthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated/archive/$importId': {
-      id: '/_authenticated/archive/$importId'
+    '/archive/$importId': {
+      id: '/archive/$importId'
       path: '/archive/$importId'
       fullPath: '/archive/$importId'
-      preLoaderRoute: typeof AuthenticatedArchiveImportIdRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+      preLoaderRoute: typeof ArchiveImportIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface AuthenticatedRouteRouteChildren {
-  AuthenticatedArchiveImportIdRoute: typeof AuthenticatedArchiveImportIdRoute
-}
-
-const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
-  AuthenticatedArchiveImportIdRoute: AuthenticatedArchiveImportIdRoute,
-}
-
-const AuthenticatedRouteRouteWithChildren =
-  AuthenticatedRouteRoute._addFileChildren(AuthenticatedRouteRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
-  AuthRoute: AuthRoute,
+  ArchiveImportIdRoute: ArchiveImportIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
