@@ -234,6 +234,34 @@ export const retryFailedAttachments = createServerFn({ method: "POST" })
     return { requeued: count ?? 0 };
   });
 
+export const getAttachmentPreview = createServerFn({ method: "POST" })
+  .inputValidator((input: { attachmentId: string }) => ({ attachmentId: String(input.attachmentId) }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    const { data: row, error } = await supabase
+      .from("attachments")
+      .select("id, filename, mime_type, storage_path, raw_text, extracted, ocr_status, ocr_error, size_bytes")
+      .eq("id", data.attachmentId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row) throw new Error("That file is no longer in the archive.");
+
+    const { data: signed } = await supabase.storage.from("wa-archive").createSignedUrl(row.storage_path, 3600);
+
+    return {
+      id: row.id,
+      filename: row.filename,
+      mimeType: row.mime_type,
+      sizeBytes: row.size_bytes,
+      ocrStatus: row.ocr_status,
+      ocrError: row.ocr_error,
+      rawText: row.raw_text,
+      extracted: row.extracted,
+      url: signed?.signedUrl ?? null,
+    };
+  });
+
+
 export const rebuildRecords = createServerFn({ method: "POST" })
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
   .handler(async ({ data }) => {
