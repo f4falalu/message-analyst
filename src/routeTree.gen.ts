@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MappingsRouteImport } from './routes/mappings'
 import { Route as ArchiveImportIdRouteImport } from './routes/archive.$importId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MappingsRoute = MappingsRouteImport.update({
+  id: '/mappings',
+  path: '/mappings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ArchiveImportIdRoute = ArchiveImportIdRouteImport.update({
@@ -25,27 +31,31 @@ const ArchiveImportIdRoute = ArchiveImportIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/mappings': typeof MappingsRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/mappings': typeof MappingsRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/mappings': typeof MappingsRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/archive/$importId'
+  fullPaths: '/' | '/mappings' | '/archive/$importId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/archive/$importId'
-  id: '__root__' | '/' | '/archive/$importId'
+  to: '/' | '/mappings' | '/archive/$importId'
+  id: '__root__' | '/' | '/mappings' | '/archive/$importId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  MappingsRoute: typeof MappingsRoute
   ArchiveImportIdRoute: typeof ArchiveImportIdRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mappings': {
+      id: '/mappings'
+      path: '/mappings'
+      fullPath: '/mappings'
+      preLoaderRoute: typeof MappingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/archive/$importId': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  MappingsRoute: MappingsRoute,
   ArchiveImportIdRoute: ArchiveImportIdRoute,
 }
 export const routeTree = rootRouteImport

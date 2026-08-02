@@ -52,6 +52,7 @@ function Home() {
   const [progress, setProgress] = useState<IngestProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [imports, setImports] = useState<ImportRow[]>([]);
+  const [resumeId, setResumeId] = useState<string | null>(null);
 
   useEffect(() => {
     supabase
@@ -71,9 +72,11 @@ function Home() {
     }
     setBusy(true);
     try {
-      const result = await ingestZip(file, setProgress);
+      const result = await ingestZip(file, setProgress, resumeId ? { resumeImportId: resumeId } : {});
       toast.success(
-        `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
+        result.skipped > 0
+          ? `Resumed — ${result.skipped.toLocaleString()} files were already uploaded, ${result.attachments.toLocaleString()} added.`
+          : `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
       );
       navigate({ to: "/archive/$importId", params: { importId: result.importId } });
     } catch (error) {
@@ -81,6 +84,7 @@ function Home() {
     } finally {
       setBusy(false);
       setProgress(null);
+      setResumeId(null);
     }
   };
 
@@ -92,7 +96,12 @@ function Home() {
       <header className="border-b border-border/60">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
           <span className="font-serif text-xl tracking-tight text-foreground">Request Ledger</span>
-          <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Internal tool</span>
+          <div className="flex items-center gap-4">
+            <Link to="/mappings" className="text-sm text-muted-foreground hover:text-foreground">
+              Name mappings
+            </Link>
+            <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Internal tool</span>
+          </div>
         </div>
       </header>
 
@@ -135,7 +144,13 @@ function Home() {
                     The whole zip, straight from WhatsApp&apos;s &ldquo;Export chat &rarr; Attach media&rdquo;.
                     Nothing is loaded into memory all at once, so multi-gigabyte exports are fine.
                   </p>
-                  <Button size="lg" onClick={() => inputRef.current?.click()}>
+                  <Button
+                    size="lg"
+                    onClick={() => {
+                      setResumeId(null);
+                      inputRef.current?.click();
+                    }}
+                  >
                     Select zip file
                   </Button>
                 </div>
@@ -174,11 +189,26 @@ function Home() {
                     <span>·</span>
                     <span>{row.total_files.toLocaleString()} files</span>
                   </div>
-                  <Button asChild variant="outline" size="sm">
-                    <Link to="/archive/$importId" params={{ importId: row.id }}>
-                      Open archive
-                    </Link>
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link to="/archive/$importId" params={{ importId: row.id }}>
+                        Open archive
+                      </Link>
+                    </Button>
+                    {row.status !== "ready" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          setResumeId(row.id);
+                          inputRef.current?.click();
+                        }}
+                      >
+                        Resume upload
+                      </Button>
+                    ) : null}
+                  </div>
                 </CardContent>
               </Card>
             ))}
