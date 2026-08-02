@@ -448,7 +448,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_attachments: {
+        Args: { _import_id: string; _limit: number }
+        Returns: {
+          filename: string
+          id: string
+          message_seq: number
+          mime_type: string
+          storage_path: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
