@@ -92,11 +92,12 @@ export function parseChat(text: string): ParsedChat {
     const body = current.body.trim();
     const attachIos = body.match(ATTACH_IOS);
     const attachAndroid = body.match(ATTACH_ANDROID);
-    current.attachment_filename = attachIos
+    current.attachment_filename = attachIos?.[1]
       ? attachIos[1].trim()
-      : attachAndroid
+      : attachAndroid?.[1]
         ? attachAndroid[1].trim()
         : null;
+
     current.body = body;
     messages.push(current);
     current = null;
