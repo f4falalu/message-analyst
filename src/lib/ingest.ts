@@ -29,10 +29,27 @@ async function runPool<T>(items: T[], limit: number, worker: (item: T, index: nu
   );
 }
 
+async function existingAttachmentNames(importId: string): Promise<Set<string>> {
+  const names = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("attachments")
+      .select("filename")
+      .eq("import_id", importId)
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    for (const row of data) names.add(row.filename.toLowerCase());
+    if (data.length < 1000) break;
+  }
+  return names;
+}
+
 export async function ingestZip(
   file: File,
   onProgress: (progress: IngestProgress) => void,
-): Promise<{ importId: string; messages: number; attachments: number; readable: number }> {
+  options: { resumeImportId?: string } = {},
+): Promise<{ importId: string; messages: number; attachments: number; readable: number; skipped: number }> {
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
 
@@ -53,19 +70,38 @@ export async function ingestZip(
 
   const mediaEntries = entries.filter((entry) => entry !== chatEntry);
 
-  const { data: importRow, error: importError } = await supabase
-    .from("imports")
-    .insert({
-      filename: file.name,
-      status: "uploading",
-      total_files: mediaEntries.length,
-      message_count: parsed.messages.length,
-      chat_parsed: true,
-    })
-    .select("id")
-    .single();
-  if (importError || !importRow) throw new Error(importError?.message ?? "Could not create the import.");
-  const importId = importRow.id;
+  let importId: string;
+  if (options.resumeImportId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("imports")
+      .update({
+        status: "uploading",
+        total_files: mediaEntries.length,
+        message_count: parsed.messages.length,
+        chat_parsed: true,
+        notes: null,
+      })
+      .eq("id", options.resumeImportId)
+      .select("id")
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+    if (!existing) throw new Error("That import no longer exists — start a fresh upload.");
+    importId = existing.id;
+  } else {
+    const { data: importRow, error: importError } = await supabase
+      .from("imports")
+      .insert({
+        filename: file.name,
+        status: "uploading",
+        total_files: mediaEntries.length,
+        message_count: parsed.messages.length,
+        chat_parsed: true,
+      })
+      .select("id")
+      .single();
+    if (importError || !importRow) throw new Error(importError?.message ?? "Could not create the import.");
+    importId = importRow.id;
+  }
 
   try {
     // Messages + contacts first, so attachments can be linked by filename.
@@ -78,7 +114,7 @@ export async function ingestZip(
 
     for (let i = 0; i < parsed.messages.length; i += 500) {
       const slice = parsed.messages.slice(i, i + 500);
-      const { error } = await supabase.from("messages").insert(
+      const { error } = await supabase.from("messages").upsert(
         slice.map((message) => ({
           import_id: importId,
               seq: message.seq,
@@ -87,6 +123,7 @@ export async function ingestZip(
           body: message.body,
           attachment_filename: message.attachment_filename,
         })),
+        { onConflict: "import_id,seq", ignoreDuplicates: true },
       );
       if (error) throw new Error(error.message);
       onProgress({
@@ -97,6 +134,7 @@ export async function ingestZip(
       });
     }
 
+    await supabase.from("contacts").delete().eq("import_id", importId);
     if (parsed.contacts.length) {
       const { error } = await supabase.from("contacts").insert(
         parsed.contacts.map((contact) => ({ ...contact, import_id: importId })),
@@ -109,6 +147,20 @@ export async function ingestZip(
       if (message.attachment_filename) {
         seqByFilename.set(baseName(message.attachment_filename).toLowerCase(), message.seq);
       }
+    }
+
+    // Anything already stored from an earlier attempt is left alone, so an
+    // interrupted upload picks up where it stopped.
+    const alreadyStored = await existingAttachmentNames(importId);
+    const todo = mediaEntries.filter((entry) => !alreadyStored.has(baseName(entry.filename).toLowerCase()));
+    const skipped = mediaEntries.length - todo.length;
+    if (skipped > 0) {
+      onProgress({
+        phase: "uploading",
+        message: `Resuming — ${skipped.toLocaleString()} files are already uploaded.`,
+        current: skipped,
+        total: mediaEntries.length,
+      });
     }
 
     // Stream each media entry straight from the zip to storage.
@@ -124,7 +176,7 @@ export async function ingestZip(
       ocr_status: string;
     }[] = [];
 
-    await runPool(mediaEntries, UPLOAD_CONCURRENCY, async (entry) => {
+    await runPool(todo, UPLOAD_CONCURRENCY, async (entry) => {
       const getData = (entry as unknown as { getData?: (writer: BlobWriter) => Promise<Blob> }).getData;
       if (!getData) return;
       const filename = baseName(entry.filename);
@@ -152,18 +204,20 @@ export async function ingestZip(
       });
 
       uploaded += 1;
-      if (uploaded % 5 === 0 || uploaded === mediaEntries.length) {
+      if (uploaded % 5 === 0 || uploaded === todo.length) {
         onProgress({
           phase: "uploading",
-          message: `Uploading attachments… ${uploaded.toLocaleString()} of ${mediaEntries.length.toLocaleString()}`,
-          current: uploaded,
+          message: `Uploading attachments… ${(uploaded + skipped).toLocaleString()} of ${mediaEntries.length.toLocaleString()}`,
+          current: uploaded + skipped,
           total: mediaEntries.length,
         });
       }
     });
 
     for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase.from("attachments").insert(rows.slice(i, i + 500));
+      const { error } = await supabase
+        .from("attachments")
+        .upsert(rows.slice(i, i + 500), { onConflict: "import_id,filename", ignoreDuplicates: true });
       if (error) throw new Error(error.message);
     }
 
@@ -174,7 +228,7 @@ export async function ingestZip(
 
     onProgress({ phase: "done", message: "Upload complete.", current: 1, total: 1 });
 
-    return { importId, messages: parsed.messages.length, attachments: rows.length, readable };
+    return { importId, messages: parsed.messages.length, attachments: rows.length, readable, skipped };
   } catch (error) {
     await supabase
       .from("imports")
