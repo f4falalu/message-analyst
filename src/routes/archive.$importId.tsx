@@ -345,6 +345,16 @@ function ArchivePage() {
     });
   }, [records, query, statusFilter]);
 
+  const activeRun = useMemo(() => runs.find((run) => run.id === activeRunId) ?? null, [runs, activeRunId]);
+
+  const visibleEvents = useMemo(() => {
+    if (eventFilter === "all") return events;
+    if (eventFilter === "low") return events.filter((event) => (event.confidence ?? 1) < 0.6);
+    if (eventFilter === "error") return events.filter((event) => event.outcome !== "done");
+    return events.filter((event) => event.outcome === "done");
+  }, [events, eventFilter]);
+
+
   const totalRead = counts.done + counts.error;
   const totalReadable = counts.pending + totalRead;
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
