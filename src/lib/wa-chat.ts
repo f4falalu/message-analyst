@@ -125,8 +125,9 @@ export function parseChat(text: string): ParsedChat {
           m[7],
           dayFirst,
         ),
-        sender: m[8].trim(),
+        sender: (m[8] ?? "").trim() || null,
         body: m[9] ?? "",
+
         attachment_filename: null,
       };
     } else if (isHeader(line)) {
