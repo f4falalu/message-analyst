@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { readDocument } from "./doc-reader.server";
 import { buildRecords, type BuilderAttachment, type BuilderMessage } from "./record-builder";
+import type { Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
 
 export const startProcessingRun = createServerFn({ method: "POST" })
@@ -274,7 +275,14 @@ export const rebuildRecords = createServerFn({ method: "POST" })
       if (page.length < 500) break;
     }
 
-    const built = buildRecords(messages, attachments);
+    const { data: mappingRows } = await supabase
+      .from("name_mappings")
+      .select("kind, pattern, canonical")
+      .eq("active", true)
+      .limit(5000);
+    const mappings = (mappingRows ?? []) as Mapping[];
+
+    const built = buildRecords(messages, attachments, mappings);
 
     const { error: deleteError } = await supabase
       .from("request_records")
@@ -301,6 +309,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
             status: record.status,
             confidence: record.confidence,
             needs_review: record.needs_review,
+            issues: record.issues as unknown as Json,
             notes: record.notes,
           })),
         )
@@ -327,5 +336,9 @@ export const rebuildRecords = createServerFn({ method: "POST" })
       .update({ status: "ready" })
       .eq("id", data.importId);
 
-    return { records: built.length, needsReview: built.filter((record) => record.needs_review).length };
+    return {
+      records: built.length,
+      needsReview: built.filter((record) => record.needs_review).length,
+      flagged: built.filter((record) => record.issues.some((issue) => issue.level === "error")).length,
+    };
   });
