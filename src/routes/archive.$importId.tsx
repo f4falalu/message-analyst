@@ -556,7 +556,100 @@ function ArchivePage() {
               ) : null}
             </div>
           </TabsContent>
+
+          <TabsContent value="log" className="mt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Select value={activeRunId ?? ""} onValueChange={setActiveRunId}>
+                <SelectTrigger className="w-[26rem]">
+                  <SelectValue placeholder="No runs yet" />
+                </SelectTrigger>
+                <SelectContent>
+                  {runs.map((run) => (
+                    <SelectItem key={run.id} value={run.id}>
+                      {new Date(run.started_at).toLocaleString()} · {run.status} · {run.processed_count} ok /{" "}
+                      {run.failed_count} failed
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={eventFilter} onValueChange={setEventFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="done">Parsed</SelectItem>
+                  <SelectItem value="error">Errors</SelectItem>
+                  <SelectItem value="low">Low confidence</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={() => void loadEvents(activeRunId)}>
+                Refresh
+              </Button>
+            </div>
+
+            {activeRun ? (
+              <div className="rounded-lg border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
+                {activeRun.total_files.toLocaleString()} files queued · {activeRun.concurrency} lanes ×{" "}
+                {activeRun.chunk_size} per chunk · started {new Date(activeRun.started_at).toLocaleString()}
+                {activeRun.finished_at
+                  ? ` · finished ${new Date(activeRun.finished_at).toLocaleString()}`
+                  : " · running"}
+                {activeRun.notes ? ` · ${activeRun.notes}` : ""}
+              </div>
+            ) : null}
+
+            <div className="overflow-x-auto rounded-xl border border-border/60">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>File</TableHead>
+                    <TableHead>Outcome</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Confidence</TableHead>
+                    <TableHead>Field confidence</TableHead>
+                    <TableHead>Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleEvents.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                        No log entries yet — run the reader to record one.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    visibleEvents.map((event) => (
+                      <TableRow key={event.id}>
+                        <TableCell className="max-w-[18rem] truncate font-mono text-xs">{event.filename}</TableCell>
+                        <TableCell>
+                          <Badge variant={event.outcome === "done" ? "default" : "outline"}>{event.outcome}</Badge>
+                          {event.error ? (
+                            <p className="mt-1 max-w-[20rem] text-xs text-muted-foreground">{event.error}</p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-sm">{event.doc_type ?? "—"}</TableCell>
+                        <TableCell className="text-sm">{formatConfidence(event.confidence)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {event.field_confidence
+                            ? Object.entries(event.field_confidence)
+                                .filter(([, value]) => value !== null)
+                                .map(([key, value]) => `${key} ${formatConfidence(value)}`)
+                                .join(" · ") || "—"
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {event.duration_ms ? `${(event.duration_ms / 1000).toFixed(1)}s` : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </TabsContent>
         </Tabs>
+
       </section>
     </main>
   );
