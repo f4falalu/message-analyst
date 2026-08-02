@@ -377,7 +377,37 @@ function ArchivePage() {
                 {counts.error.toLocaleString()} failed · {counts.skipped.toLocaleString()} not readable
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Lanes</p>
+                <Select value={concurrency} onValueChange={setConcurrency} disabled={reading}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["1", "2", "3", "4", "6", "8"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Per chunk</p>
+                <Select value={chunkSize} onValueChange={setChunkSize} disabled={reading}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["2", "4", "6", "8", "12"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button onClick={readAll} disabled={reading || counts.pending === 0}>
                 {reading ? "Reading…" : "Read pending documents"}
               </Button>
@@ -392,6 +422,10 @@ function ArchivePage() {
             </div>
           </div>
           <Progress className="mt-5" value={readPercent} />
+          <p className="mt-2 text-xs text-muted-foreground">
+            {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
+            {Number(concurrency) * Number(chunkSize)} documents read at once.
+          </p>
         </div>
       </section>
 
@@ -400,7 +434,9 @@ function ArchivePage() {
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
+            <TabsTrigger value="log">Run log</TabsTrigger>
           </TabsList>
+
 
           <TabsContent value="records" className="mt-6 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
