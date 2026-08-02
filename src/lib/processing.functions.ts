@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { readDocument } from "./doc-reader.server";
 import { buildRecords, type BuilderAttachment, type BuilderMessage } from "./record-builder";
+import type { Json } from "@/integrations/supabase/types";
+
 
 export const processAttachmentBatch = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
