@@ -9,13 +9,22 @@ import {
   rebuildRecords,
   retryFailedAttachments,
   startProcessingRun,
+  getAttachmentPreview,
 } from "@/lib/processing.functions";
+import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -47,6 +56,7 @@ type RequestRecord = {
   status: string;
   confidence: number | null;
   needs_review: boolean;
+  issues: Issue[];
   notes: string | null;
 };
 
@@ -74,8 +84,21 @@ type RunRow = {
   finished_at: string | null;
 };
 
+type Preview = {
+  id: string;
+  filename: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  ocrStatus: string;
+  ocrError: string | null;
+  rawText: string | null;
+  extracted: unknown;
+  url: string | null;
+};
+
 type EventRow = {
   id: string;
+  attachment_id: string | null;
   filename: string;
   outcome: string;
   doc_type: string | null;
@@ -182,7 +205,7 @@ function ArchivePage() {
     }
     const { data } = await supabase
       .from("processing_events")
-      .select("id, filename, outcome, doc_type, confidence, field_confidence, duration_ms, error, created_at")
+      .select("id, attachment_id, filename, outcome, doc_type, confidence, field_confidence, duration_ms, error, created_at")
       .eq("run_id", runId)
       .order("created_at", { ascending: false })
       .limit(1000);
@@ -198,7 +221,7 @@ function ArchivePage() {
     const { data, error } = await supabase
       .from("request_records")
       .select(
-        "id, facility_name, items, amount_paid, currency, request_date, payment_date, requester_name, requester_phone, status, confidence, needs_review, notes",
+        "id, facility_name, items, amount_paid, currency, request_date, payment_date, requester_name, requester_phone, status, confidence, needs_review, issues, notes",
       )
       .eq("import_id", importId)
       .order("request_date", { ascending: true, nullsFirst: false })
@@ -211,6 +234,7 @@ function ArchivePage() {
       (data ?? []).map((row) => ({
         ...row,
         items: Array.isArray(row.items) ? (row.items as unknown as RecordItem[]) : [],
+        issues: Array.isArray(row.issues) ? (row.issues as unknown as Issue[]) : [],
       })),
     );
   }, [importId]);
