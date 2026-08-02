@@ -2,6 +2,7 @@
 // into request records. No I/O so it can be unit-reasoned and reused.
 
 import type { ExtractedDoc } from "./doc-reader.server";
+import { normaliseRecordNames, validateRecord, type Issue, type Mapping } from "./data-rules";
 
 export type BuilderMessage = {
   id: string;
@@ -30,6 +31,7 @@ export type BuiltRecord = {
   status: "requested" | "paid" | "unclear";
   confidence: number;
   needs_review: boolean;
+  issues: Issue[];
   notes: string | null;
   sources: { kind: "message" | "attachment"; message_id?: string; attachment_id?: string }[];
 };
@@ -81,6 +83,7 @@ export function contextAround(
 export function buildRecords(
   messages: BuilderMessage[],
   attachments: BuilderAttachment[],
+  mappings: Mapping[] = [],
 ): BuiltRecord[] {
   const ordered = [...messages].sort((a, b) => a.seq - b.seq);
   const bySeq = new Map<number, number>();
@@ -126,6 +129,7 @@ export function buildRecords(
       status: "requested",
       confidence: doc.confidence,
       needs_review: missing.length > 0 || doc.confidence < 0.6,
+      issues: [],
       notes: missing.length ? `Missing from document: ${missing.join(", ")}.` : null,
       sources: [
         { kind: "attachment", attachment_id: attachment.id },
@@ -194,6 +198,7 @@ export function buildRecords(
         status: "paid",
         confidence: doc.confidence,
         needs_review: true,
+        issues: [],
         notes: "Payment document with no matching request found in the chat.",
         sources: [
           { kind: "attachment", attachment_id: attachment.id },
@@ -233,5 +238,15 @@ export function buildRecords(
     if (!record.payment_date && record.status !== "paid") record.status = "requested";
   }
 
-  return records;
+  // Fold names through the mapping layer, then run the field-level checks so
+  // every record carries readable flags before it reaches the spreadsheet.
+  return records.map((record) => {
+    const mapped = normaliseRecordNames(record, mappings);
+    const issues = validateRecord(mapped);
+    return {
+      ...mapped,
+      issues,
+      needs_review: mapped.needs_review || issues.length > 0,
+    };
+  });
 }
