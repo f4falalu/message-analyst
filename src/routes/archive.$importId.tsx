@@ -149,6 +149,29 @@ function ArchivePage() {
   const runRetry = useServerFn(retryFailedAttachments);
   const beginRun = useServerFn(startProcessingRun);
   const endRun = useServerFn(finishProcessingRun);
+  const fetchPreview = useServerFn(getAttachmentPreview);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const openPreview = useCallback(
+    async (attachmentId: string | null) => {
+      if (!attachmentId) {
+        toast.error("This log entry has no stored file to preview.");
+        return;
+      }
+      setPreviewLoading(true);
+      setPreview(null);
+      try {
+        const result = await fetchPreview({ data: { attachmentId } });
+        setPreview(result as Preview);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not open that file.");
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [fetchPreview],
+  );
 
   const [importName, setImportName] = useState("");
   const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0 });
@@ -549,6 +572,18 @@ function ArchivePage() {
                               {record.status}
                             </Badge>
                             {record.needs_review ? <Badge variant="outline">review</Badge> : null}
+                            {record.issues.map((issue, index) => (
+                              <span
+                                key={`${record.id}-issue-${index}`}
+                                className={
+                                  issue.level === "error"
+                                    ? "text-xs text-destructive"
+                                    : "text-xs text-muted-foreground"
+                                }
+                              >
+                                {issue.message}
+                              </span>
+                            ))}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -659,8 +694,14 @@ function ArchivePage() {
                     </TableRow>
                   ) : (
                     visibleEvents.map((event) => (
-                      <TableRow key={event.id}>
-                        <TableCell className="max-w-[18rem] truncate font-mono text-xs">{event.filename}</TableCell>
+                      <TableRow
+                        key={event.id}
+                        className="cursor-pointer"
+                        onClick={() => void openPreview(event.attachment_id)}
+                      >
+                        <TableCell className="max-w-[18rem] truncate font-mono text-xs underline decoration-dotted underline-offset-4">
+                          {event.filename}
+                        </TableCell>
                         <TableCell>
                           <Badge variant={event.outcome === "done" ? "default" : "outline"}>{event.outcome}</Badge>
                           {event.error ? (
@@ -690,6 +731,77 @@ function ArchivePage() {
         </Tabs>
 
       </section>
+
+      <Sheet
+        open={previewLoading || preview !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null);
+        }}
+      >
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle className="break-all font-mono text-sm">
+              {preview?.filename ?? "Opening file…"}
+            </SheetTitle>
+            <SheetDescription>
+              {preview
+                ? `${preview.mimeType ?? "unknown type"}${
+                    preview.sizeBytes ? ` · ${(preview.sizeBytes / 1024).toFixed(0)} KB` : ""
+                  } · ${preview.ocrStatus}`
+                : "Fetching the stored file and its extracted text."}
+            </SheetDescription>
+          </SheetHeader>
+
+          {preview ? (
+            <div className="space-y-5 px-4 pb-8">
+              {preview.url ? (
+                preview.mimeType?.includes("pdf") ? (
+                  <object
+                    data={preview.url}
+                    type="application/pdf"
+                    className="h-96 w-full rounded-lg border border-border/60"
+                  >
+                    <a href={preview.url} target="_blank" rel="noreferrer" className="text-sm underline">
+                      Open the PDF in a new tab
+                    </a>
+                  </object>
+                ) : (
+                  <a href={preview.url} target="_blank" rel="noreferrer">
+                    <img
+                      src={preview.url}
+                      alt={`Scanned document ${preview.filename}`}
+                      loading="lazy"
+                      className="max-h-96 w-full rounded-lg border border-border/60 object-contain"
+                    />
+                  </a>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">The stored file could not be opened.</p>
+              )}
+
+              {preview.ocrError ? (
+                <p className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
+                  {preview.ocrError}
+                </p>
+              ) : null}
+
+              <div>
+                <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Text read from the file</h3>
+                <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-card/40 p-3 text-xs text-foreground">
+                  {preview.rawText?.trim() || "Nothing was read from this file."}
+                </pre>
+              </div>
+
+              <div>
+                <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Extracted fields</h3>
+                <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-card/40 p-3 text-xs text-foreground">
+                  {preview.extracted ? JSON.stringify(preview.extracted, null, 2) : "No structured fields."}
+                </pre>
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </main>
   );
 }
