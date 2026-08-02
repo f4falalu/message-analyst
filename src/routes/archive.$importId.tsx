@@ -114,6 +114,11 @@ function formatMoney(amount: number | null, currency: string | null): string {
   return `${currency ? `${currency} ` : ""}${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+function formatConfidence(value: number | null): string {
+  if (value === null || value === undefined) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
 function ArchivePage() {
   const { importId } = Route.useParams();
   const runBatch = useServerFn(processAttachmentBatch);
