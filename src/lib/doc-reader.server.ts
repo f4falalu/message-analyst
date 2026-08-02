@@ -45,13 +45,22 @@ Return ONLY a JSON object with exactly these keys:
   "contact_phone": string | null,
   "reference": string | null,
   "raw_text": string,
-  "confidence": number
+  "confidence": number,
+  "field_confidence": {
+    "facility_name": number | null,
+    "items": number | null,
+    "total_amount": number | null,
+    "document_date": number | null,
+    "payment_date": number | null,
+    "contact": number | null
+  }
 }
 
 doc_type: "request" for requisitions/order lists, "invoice" for priced bills, "receipt" for proof of payment, "other" for anything else (photos of people, screenshots, unrelated pages).
 total_amount: numeric only, no currency symbols or thousands separators.
 raw_text: a plain-text transcription of the document (keep it under 4000 characters).
-confidence: 0 to 1, how sure you are the structured fields are correct.`;
+confidence: 0 to 1, how sure you are the structured fields are correct.
+field_confidence: 0 to 1 per field, how legible/certain that specific field was. Use null for fields that are absent from the document.`;
 
 function coerceNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
