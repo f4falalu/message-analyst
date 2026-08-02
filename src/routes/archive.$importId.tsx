@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  finishProcessingRun,
   processAttachmentBatch,
   rebuildRecords,
   retryFailedAttachments,
+  startProcessingRun,
 } from "@/lib/processing.functions";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
 import { Button } from "@/components/ui/button";
