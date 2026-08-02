@@ -197,6 +197,132 @@ export type Database = {
           },
         ]
       }
+      processing_events: {
+        Row: {
+          attachment_id: string | null
+          confidence: number | null
+          created_at: string
+          doc_type: string | null
+          duration_ms: number | null
+          error: string | null
+          field_confidence: Json | null
+          filename: string
+          id: string
+          import_id: string
+          outcome: string
+          run_id: string
+        }
+        Insert: {
+          attachment_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          doc_type?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          field_confidence?: Json | null
+          filename: string
+          id?: string
+          import_id: string
+          outcome: string
+          run_id: string
+        }
+        Update: {
+          attachment_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          doc_type?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          field_confidence?: Json | null
+          filename?: string
+          id?: string
+          import_id?: string
+          outcome?: string
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_events_attachment_id_fkey"
+            columns: ["attachment_id"]
+            isOneToOne: false
+            referencedRelation: "attachments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_events_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_events_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "processing_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      processing_runs: {
+        Row: {
+          chunk_size: number
+          concurrency: number
+          created_at: string
+          failed_count: number
+          finished_at: string | null
+          id: string
+          import_id: string
+          kind: string
+          notes: string | null
+          processed_count: number
+          started_at: string
+          status: string
+          total_files: number
+          user_id: string | null
+        }
+        Insert: {
+          chunk_size?: number
+          concurrency?: number
+          created_at?: string
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          import_id: string
+          kind?: string
+          notes?: string | null
+          processed_count?: number
+          started_at?: string
+          status?: string
+          total_files?: number
+          user_id?: string | null
+        }
+        Update: {
+          chunk_size?: number
+          concurrency?: number
+          created_at?: string
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          import_id?: string
+          kind?: string
+          notes?: string | null
+          processed_count?: number
+          started_at?: string
+          status?: string
+          total_files?: number
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_runs_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       record_sources: {
         Row: {
           attachment_id: string | null
@@ -322,7 +448,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_attachments: {
+        Args: { _import_id: string; _limit: number }
+        Returns: {
+          filename: string
+          id: string
+          message_seq: number
+          mime_type: string
+          storage_path: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  finishProcessingRun,
   processAttachmentBatch,
   rebuildRecords,
   retryFailedAttachments,
+  startProcessingRun,
 } from "@/lib/processing.functions";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
 import { Button } from "@/components/ui/button";
@@ -59,6 +61,33 @@ type MessageRow = {
 
 type Counts = { pending: number; done: number; error: number; skipped: number };
 
+type RunRow = {
+  id: string;
+  status: string;
+  concurrency: number;
+  chunk_size: number;
+  total_files: number;
+  processed_count: number;
+  failed_count: number;
+  notes: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+type EventRow = {
+  id: string;
+  filename: string;
+  outcome: string;
+  doc_type: string | null;
+  confidence: number | null;
+  field_confidence: Record<string, number | null> | null;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+};
+
+
+
 export const Route = createFileRoute("/archive/$importId")({
   head: () => ({
     meta: [
@@ -85,11 +114,18 @@ function formatMoney(amount: number | null, currency: string | null): string {
   return `${currency ? `${currency} ` : ""}${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+function formatConfidence(value: number | null): string {
+  if (value === null || value === undefined) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
 function ArchivePage() {
   const { importId } = Route.useParams();
   const runBatch = useServerFn(processAttachmentBatch);
   const runRebuild = useServerFn(rebuildRecords);
   const runRetry = useServerFn(retryFailedAttachments);
+  const beginRun = useServerFn(startProcessingRun);
+  const endRun = useServerFn(finishProcessingRun);
 
   const [importName, setImportName] = useState("");
   const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0 });
@@ -98,6 +134,13 @@ function ArchivePage() {
   const [building, setBuilding] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  const [concurrency, setConcurrency] = useState("4");
+  const [chunkSize, setChunkSize] = useState("6");
+  const [runs, setRuns] = useState<RunRow[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [eventFilter, setEventFilter] = useState("all");
 
   const [messageQuery, setMessageQuery] = useState("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -118,6 +161,38 @@ function ArchivePage() {
     );
     setCounts(next);
   }, [importId]);
+
+  const loadRuns = useCallback(async () => {
+    const { data } = await supabase
+      .from("processing_runs")
+      .select(
+        "id, status, concurrency, chunk_size, total_files, processed_count, failed_count, notes, started_at, finished_at",
+      )
+      .eq("import_id", importId)
+      .order("started_at", { ascending: false })
+      .limit(25);
+    setRuns((data ?? []) as RunRow[]);
+    setActiveRunId((current) => current ?? data?.[0]?.id ?? null);
+  }, [importId]);
+
+  const loadEvents = useCallback(async (runId: string | null) => {
+    if (!runId) {
+      setEvents([]);
+      return;
+    }
+    const { data } = await supabase
+      .from("processing_events")
+      .select("id, filename, outcome, doc_type, confidence, field_confidence, duration_ms, error, created_at")
+      .eq("run_id", runId)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    setEvents(
+      (data ?? []).map((row) => ({
+        ...row,
+        field_confidence: (row.field_confidence ?? null) as EventRow["field_confidence"],
+      })),
+    );
+  }, []);
 
   const loadRecords = useCallback(async () => {
     const { data, error } = await supabase
@@ -149,38 +224,62 @@ function ArchivePage() {
       .then(({ data }) => setImportName(data?.filename ?? ""));
     void loadCounts();
     void loadRecords();
-  }, [importId, loadCounts, loadRecords]);
+    void loadRuns();
+  }, [importId, loadCounts, loadRecords, loadRuns]);
+
+  useEffect(() => {
+    void loadEvents(activeRunId);
+  }, [activeRunId, loadEvents]);
 
   const readAll = async () => {
     setReading(true);
+    const lanes = Number(concurrency);
+    const chunk = Number(chunkSize);
+    let runId: string | null = null;
+    let stopped = false;
+    let stopReason: string | null = null;
     try {
-      for (;;) {
-        const result = await runBatch({ data: { importId, limit: 6 } });
-        await loadCounts();
-        if (result.creditsExhausted) {
-          toast.error("AI credits are exhausted. Top up your workspace credits to continue reading documents.");
-          break;
+      const started = await beginRun({ data: { importId, concurrency: lanes, chunkSize: chunk } });
+      runId = started.runId;
+      setActiveRunId(runId);
+      await loadRuns();
+
+      // Each lane pulls its own chunk of files; the backend hands out
+      // non-overlapping batches, so lanes never read the same document.
+      const lane = async () => {
+        for (;;) {
+          if (stopped) return;
+          const result = await runBatch({ data: { importId, limit: chunk, runId } });
+          void loadCounts();
+          if (result.creditsExhausted) {
+            stopped = true;
+            stopReason = "AI credits exhausted";
+            toast.error("AI credits are exhausted. Top up your workspace credits to continue reading documents.");
+            return;
+          }
+          if (result.rateLimited) {
+            await new Promise((resolve) => setTimeout(resolve, 8000));
+            continue;
+          }
+          if (result.processed === 0 && result.failed === 0) return;
         }
-        if (result.rateLimited) {
-          await new Promise((resolve) => setTimeout(resolve, 8000));
-          continue;
-        }
-        if (result.remaining === 0) {
-          toast.success("All documents have been read.");
-          break;
-        }
-        if (result.processed === 0 && result.failed > 0) {
-          toast.error("Some documents could not be read. See the Attachments tab.");
-          break;
-        }
-      }
+      };
+
+      await Promise.all(Array.from({ length: lanes }, () => lane()));
+      await endRun({ data: { runId, status: stopped ? "stopped" : "completed", notes: stopReason } });
+      if (!stopped) toast.success("Reading finished.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Reading stopped unexpectedly.");
+      const message = error instanceof Error ? error.message : "Reading stopped unexpectedly.";
+      toast.error(message);
+      if (runId) await endRun({ data: { runId, status: "error", notes: message } });
     } finally {
       setReading(false);
       void loadCounts();
+      void loadRuns();
+      void loadEvents(runId ?? activeRunId);
     }
   };
+
 
   const build = async () => {
     setBuilding(true);
@@ -246,6 +345,16 @@ function ArchivePage() {
     });
   }, [records, query, statusFilter]);
 
+  const activeRun = useMemo(() => runs.find((run) => run.id === activeRunId) ?? null, [runs, activeRunId]);
+
+  const visibleEvents = useMemo(() => {
+    if (eventFilter === "all") return events;
+    if (eventFilter === "low") return events.filter((event) => (event.confidence ?? 1) < 0.6);
+    if (eventFilter === "error") return events.filter((event) => event.outcome !== "done");
+    return events.filter((event) => event.outcome === "done");
+  }, [events, eventFilter]);
+
+
   const totalRead = counts.done + counts.error;
   const totalReadable = counts.pending + totalRead;
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
@@ -283,7 +392,37 @@ function ArchivePage() {
                 {counts.error.toLocaleString()} failed · {counts.skipped.toLocaleString()} not readable
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Lanes</p>
+                <Select value={concurrency} onValueChange={setConcurrency} disabled={reading}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["1", "2", "3", "4", "6", "8"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Per chunk</p>
+                <Select value={chunkSize} onValueChange={setChunkSize} disabled={reading}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["2", "4", "6", "8", "12"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button onClick={readAll} disabled={reading || counts.pending === 0}>
                 {reading ? "Reading…" : "Read pending documents"}
               </Button>
@@ -298,6 +437,10 @@ function ArchivePage() {
             </div>
           </div>
           <Progress className="mt-5" value={readPercent} />
+          <p className="mt-2 text-xs text-muted-foreground">
+            {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
+            {Number(concurrency) * Number(chunkSize)} documents read at once.
+          </p>
         </div>
       </section>
 
@@ -306,7 +449,9 @@ function ArchivePage() {
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
+            <TabsTrigger value="log">Run log</TabsTrigger>
           </TabsList>
+
 
           <TabsContent value="records" className="mt-6 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -426,7 +571,100 @@ function ArchivePage() {
               ) : null}
             </div>
           </TabsContent>
+
+          <TabsContent value="log" className="mt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Select value={activeRunId ?? ""} onValueChange={setActiveRunId}>
+                <SelectTrigger className="w-[26rem]">
+                  <SelectValue placeholder="No runs yet" />
+                </SelectTrigger>
+                <SelectContent>
+                  {runs.map((run) => (
+                    <SelectItem key={run.id} value={run.id}>
+                      {new Date(run.started_at).toLocaleString()} · {run.status} · {run.processed_count} ok /{" "}
+                      {run.failed_count} failed
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={eventFilter} onValueChange={setEventFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="done">Parsed</SelectItem>
+                  <SelectItem value="error">Errors</SelectItem>
+                  <SelectItem value="low">Low confidence</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={() => void loadEvents(activeRunId)}>
+                Refresh
+              </Button>
+            </div>
+
+            {activeRun ? (
+              <div className="rounded-lg border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
+                {activeRun.total_files.toLocaleString()} files queued · {activeRun.concurrency} lanes ×{" "}
+                {activeRun.chunk_size} per chunk · started {new Date(activeRun.started_at).toLocaleString()}
+                {activeRun.finished_at
+                  ? ` · finished ${new Date(activeRun.finished_at).toLocaleString()}`
+                  : " · running"}
+                {activeRun.notes ? ` · ${activeRun.notes}` : ""}
+              </div>
+            ) : null}
+
+            <div className="overflow-x-auto rounded-xl border border-border/60">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>File</TableHead>
+                    <TableHead>Outcome</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Confidence</TableHead>
+                    <TableHead>Field confidence</TableHead>
+                    <TableHead>Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleEvents.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                        No log entries yet — run the reader to record one.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    visibleEvents.map((event) => (
+                      <TableRow key={event.id}>
+                        <TableCell className="max-w-[18rem] truncate font-mono text-xs">{event.filename}</TableCell>
+                        <TableCell>
+                          <Badge variant={event.outcome === "done" ? "default" : "outline"}>{event.outcome}</Badge>
+                          {event.error ? (
+                            <p className="mt-1 max-w-[20rem] text-xs text-muted-foreground">{event.error}</p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-sm">{event.doc_type ?? "—"}</TableCell>
+                        <TableCell className="text-sm">{formatConfidence(event.confidence)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {event.field_confidence
+                            ? Object.entries(event.field_confidence as Record<string, number | null>)
+                                .filter(([, value]) => typeof value === "number")
+                                .map(([key, value]) => `${key} ${formatConfidence(value as number)}`)
+                                .join(" · ") || "—"
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {event.duration_ms ? `${(event.duration_ms / 1000).toFixed(1)}s` : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </TabsContent>
         </Tabs>
+
       </section>
     </main>
   );

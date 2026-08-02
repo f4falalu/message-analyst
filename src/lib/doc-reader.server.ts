@@ -3,6 +3,15 @@
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const MODEL = "google/gemini-3.6-flash";
 
+export type FieldConfidence = {
+  facility_name: number | null;
+  items: number | null;
+  total_amount: number | null;
+  document_date: number | null;
+  payment_date: number | null;
+  contact: number | null;
+};
+
 export type ExtractedDoc = {
   doc_type: "request" | "receipt" | "invoice" | "other";
   facility_name: string | null;
@@ -16,6 +25,7 @@ export type ExtractedDoc = {
   reference: string | null;
   raw_text: string;
   confidence: number;
+  field_confidence: FieldConfidence;
 };
 
 const SYSTEM_PROMPT = `You read scanned procurement paperwork exchanged over WhatsApp: supply requests, requisitions, invoices, receipts, payment confirmations and hand-written notes from health facilities.
@@ -35,13 +45,22 @@ Return ONLY a JSON object with exactly these keys:
   "contact_phone": string | null,
   "reference": string | null,
   "raw_text": string,
-  "confidence": number
+  "confidence": number,
+  "field_confidence": {
+    "facility_name": number | null,
+    "items": number | null,
+    "total_amount": number | null,
+    "document_date": number | null,
+    "payment_date": number | null,
+    "contact": number | null
+  }
 }
 
 doc_type: "request" for requisitions/order lists, "invoice" for priced bills, "receipt" for proof of payment, "other" for anything else (photos of people, screenshots, unrelated pages).
 total_amount: numeric only, no currency symbols or thousands separators.
 raw_text: a plain-text transcription of the document (keep it under 4000 characters).
-confidence: 0 to 1, how sure you are the structured fields are correct.`;
+confidence: 0 to 1, how sure you are the structured fields are correct.
+field_confidence: 0 to 1 per field, how legible/certain that specific field was. Use null for fields that are absent from the document.`;
 
 function coerceNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -87,6 +106,12 @@ function normalise(input: unknown): ExtractedDoc {
 
   const confidence = coerceNumber(raw["confidence"]);
 
+  const fcRaw = (raw["field_confidence"] ?? {}) as Record<string, unknown>;
+  const clamp = (value: unknown): number | null => {
+    const n = coerceNumber(value);
+    return n === null ? null : Math.max(0, Math.min(1, n));
+  };
+
   return {
     doc_type: docType,
     facility_name: str("facility_name"),
@@ -100,6 +125,14 @@ function normalise(input: unknown): ExtractedDoc {
     reference: str("reference"),
     raw_text: typeof raw["raw_text"] === "string" ? raw["raw_text"].slice(0, 8000) : "",
     confidence: confidence === null ? 0.5 : Math.max(0, Math.min(1, confidence)),
+    field_confidence: {
+      facility_name: clamp(fcRaw["facility_name"]),
+      items: clamp(fcRaw["items"]),
+      total_amount: clamp(fcRaw["total_amount"]),
+      document_date: clamp(fcRaw["document_date"]),
+      payment_date: clamp(fcRaw["payment_date"]),
+      contact: clamp(fcRaw["contact"]),
+    },
   };
 }
 

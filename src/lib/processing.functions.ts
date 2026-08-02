@@ -3,38 +3,121 @@ import { readDocument } from "./doc-reader.server";
 import { buildRecords, type BuilderAttachment, type BuilderMessage } from "./record-builder";
 import type { Json } from "@/integrations/supabase/types";
 
+export const startProcessingRun = createServerFn({ method: "POST" })
+  .inputValidator((input: { importId: string; concurrency: number; chunkSize: number; kind?: string }) => ({
+    importId: String(input.importId),
+    concurrency: Math.max(1, Math.min(8, Number(input.concurrency))),
+    chunkSize: Math.max(1, Math.min(12, Number(input.chunkSize))),
+    kind: String(input.kind ?? "ocr"),
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    const { count } = await supabase
+      .from("attachments")
+      .select("id", { count: "exact", head: true })
+      .eq("import_id", data.importId)
+      .eq("ocr_status", "pending");
+
+    const { data: run, error } = await supabase
+      .from("processing_runs")
+      .insert({
+        import_id: data.importId,
+        kind: data.kind,
+        status: "running",
+        concurrency: data.concurrency,
+        chunk_size: data.chunkSize,
+        total_files: count ?? 0,
+      })
+      .select("id")
+      .single();
+    if (error || !run) throw new Error(error?.message ?? "Could not start the run.");
+    return { runId: run.id, totalFiles: count ?? 0 };
+  });
+
+export const finishProcessingRun = createServerFn({ method: "POST" })
+  .inputValidator((input: { runId: string; status: string; notes?: string | null }) => ({
+    runId: String(input.runId),
+    status: String(input.status),
+    notes: input.notes ? String(input.notes).slice(0, 500) : null,
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    const counts = await Promise.all(
+      (["done", "error"] as const).map(async (outcome) => {
+        const { count } = await supabase
+          .from("processing_events")
+          .select("id", { count: "exact", head: true })
+          .eq("run_id", data.runId)
+          .eq("outcome", outcome);
+        return count ?? 0;
+      }),
+    );
+
+    const { error } = await supabase
+      .from("processing_runs")
+      .update({
+        status: data.status,
+        notes: data.notes,
+        processed_count: counts[0] ?? 0,
+        failed_count: counts[1] ?? 0,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", data.runId);
+    if (error) throw new Error(error.message);
+    return { processed: counts[0] ?? 0, failed: counts[1] ?? 0 };
+  });
 
 export const processAttachmentBatch = createServerFn({ method: "POST" })
-  .inputValidator((input: { importId: string; limit?: number }) => ({
+  .inputValidator((input: { importId: string; limit?: number; runId?: string | null }) => ({
     importId: String(input.importId),
     limit: Math.max(1, Math.min(12, Number(input.limit ?? 6))),
+    runId: input.runId ? String(input.runId) : null,
   }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
     const apiKey = process.env["LOVABLE_API_KEY"];
     if (!apiKey) throw new Error("AI is not configured for this project.");
 
-    const { data: pending, error: pendingError } = await supabase
-      .from("attachments")
-      .select("id, filename, storage_path, mime_type, message_seq")
-      .eq("import_id", data.importId)
-      .eq("ocr_status", "pending")
-      .order("filename", { ascending: true })
-      .limit(data.limit);
+    // Atomic claim: safe when several batches run at the same time.
+    const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", {
+      _import_id: data.importId,
+      _limit: data.limit,
+    });
 
-    if (pendingError) throw new Error(pendingError.message);
-    if (!pending || pending.length === 0) return { processed: 0, failed: 0, remaining: 0 };
-
-    const ids = pending.map((row) => row.id);
-    await supabase.from("attachments").update({ ocr_status: "processing" }).in("id", ids);
+    if (claimError) throw new Error(claimError.message);
+    if (!pending || pending.length === 0) {
+      const { count } = await supabase
+        .from("attachments")
+        .select("id", { count: "exact", head: true })
+        .eq("import_id", data.importId)
+        .eq("ocr_status", "pending");
+      return { processed: 0, failed: 0, remaining: count ?? 0, rateLimited: false, creditsExhausted: false };
+    }
 
     let processed = 0;
     let failed = 0;
     let rateLimited = false;
     let creditsExhausted = false;
 
+    type EventRow = {
+      run_id: string;
+      import_id: string;
+      attachment_id: string;
+      filename: string;
+      outcome: string;
+      doc_type: string | null;
+      confidence: number | null;
+      field_confidence: Json | null;
+      duration_ms: number;
+      error: string | null;
+    };
+    const events: EventRow[] = [];
+
     await Promise.all(
       pending.map(async (attachment) => {
+        const startedAt = Date.now();
         try {
           const { data: signed, error: signError } = await supabase.storage
             .from("wa-archive")
@@ -76,22 +159,57 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             .eq("id", attachment.id);
           if (updateError) throw new Error(updateError.message);
           processed += 1;
+
+          if (data.runId) {
+            events.push({
+              run_id: data.runId,
+              import_id: data.importId,
+              attachment_id: attachment.id,
+              filename: attachment.filename,
+              outcome: "done",
+              doc_type: extracted.doc_type,
+              confidence: extracted.confidence,
+              field_confidence: extracted.field_confidence as unknown as Json,
+              duration_ms: Date.now() - startedAt,
+              error: null,
+            });
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("[429]")) rateLimited = true;
           if (message.includes("[402]")) creditsExhausted = true;
           failed += 1;
+          const requeued = message.includes("[429]");
           await supabase
             .from("attachments")
             .update({
-              ocr_status: message.includes("[429]") ? "pending" : "error",
+              ocr_status: requeued ? "pending" : "error",
               ocr_error: message.slice(0, 800),
               processed_at: new Date().toISOString(),
             })
             .eq("id", attachment.id);
+
+          if (data.runId) {
+            events.push({
+              run_id: data.runId,
+              import_id: data.importId,
+              attachment_id: attachment.id,
+              filename: attachment.filename,
+              outcome: requeued ? "requeued" : "error",
+              doc_type: null,
+              confidence: null,
+              field_confidence: null,
+              duration_ms: Date.now() - startedAt,
+              error: message.slice(0, 800),
+            });
+          }
         }
       }),
     );
+
+    if (events.length) {
+      await supabase.from("processing_events").insert(events);
+    }
 
     const { count } = await supabase
       .from("attachments")
