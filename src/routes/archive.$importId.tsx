@@ -59,7 +59,7 @@ type MessageRow = {
 
 type Counts = { pending: number; done: number; error: number; skipped: number };
 
-export const Route = createFileRoute("/_authenticated/archive/$importId")({
+export const Route = createFileRoute("/archive/$importId")({
   head: () => ({
     meta: [
       { title: "Archive — Request Ledger" },
