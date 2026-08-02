@@ -197,6 +197,39 @@ export type Database = {
           },
         ]
       }
+      name_mappings: {
+        Row: {
+          active: boolean
+          canonical: string
+          created_at: string
+          id: string
+          kind: string
+          notes: string | null
+          pattern: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          canonical: string
+          created_at?: string
+          id?: string
+          kind: string
+          notes?: string | null
+          pattern: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          canonical?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          notes?: string | null
+          pattern?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       processing_events: {
         Row: {
           attachment_id: string | null
@@ -384,6 +417,7 @@ export type Database = {
           facility_name: string | null
           id: string
           import_id: string
+          issues: Json
           items: Json
           needs_review: boolean
           notes: string | null
@@ -403,6 +437,7 @@ export type Database = {
           facility_name?: string | null
           id?: string
           import_id: string
+          issues?: Json
           items?: Json
           needs_review?: boolean
           notes?: string | null
@@ -422,6 +457,7 @@ export type Database = {
           facility_name?: string | null
           id?: string
           import_id?: string
+          issues?: Json
           items?: Json
           needs_review?: boolean
           notes?: string | null
