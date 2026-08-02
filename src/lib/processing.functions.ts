@@ -1,20 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { readDocument } from "./doc-reader.server";
 import { buildRecords, type BuilderAttachment, type BuilderMessage } from "./record-builder";
 import type { Json } from "@/integrations/supabase/types";
 
 
 export const processAttachmentBatch = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input: { importId: string; limit?: number }) => ({
     importId: String(input.importId),
     limit: Math.max(1, Math.min(12, Number(input.limit ?? 6))),
   }))
-  .handler(async ({ data, context }) => {
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
     const apiKey = process.env["LOVABLE_API_KEY"];
     if (!apiKey) throw new Error("AI is not configured for this project.");
-    const supabase = context.supabase;
 
     const { data: pending, error: pendingError } = await supabase
       .from("attachments")
@@ -105,10 +103,10 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
   });
 
 export const retryFailedAttachments = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
-  .handler(async ({ data, context }) => {
-    const { error, count } = await context.supabase
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    const { error, count } = await supabase
       .from("attachments")
       .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
       .eq("import_id", data.importId)
@@ -118,10 +116,9 @@ export const retryFailedAttachments = createServerFn({ method: "POST" })
   });
 
 export const rebuildRecords = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
-  .handler(async ({ data, context }) => {
-    const supabase = context.supabase;
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
 
     const messages: BuilderMessage[] = [];
     for (let from = 0; ; from += 1000) {
@@ -174,7 +171,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
         .insert(
           slice.map((record) => ({
             import_id: data.importId,
-            user_id: context.userId,
+            user_id: null,
             facility_name: record.facility_name,
             items: record.items as unknown as Json,
             amount_paid: record.amount_paid,
@@ -195,7 +192,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
       const sourceRows = (inserted ?? []).flatMap((row, index) =>
         (slice[index]?.sources ?? []).map((source) => ({
           record_id: row.id,
-          user_id: context.userId,
+          user_id: null,
           kind: source.kind,
           message_id: source.message_id ?? null,
           attachment_id: source.attachment_id ?? null,
