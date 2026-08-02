@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { issuesToText, type Issue } from "./data-rules";
 
 export type ExportRecord = {
   facility_name: string | null;
@@ -12,6 +13,7 @@ export type ExportRecord = {
   status: string;
   confidence: number | null;
   needs_review: boolean;
+  issues?: Issue[] | null;
   notes: string | null;
 };
 
@@ -26,21 +28,27 @@ function itemsToText(items: ExportRecord["items"]): string {
 }
 
 export function exportRecordsToXlsx(records: ExportRecord[], filename: string) {
-  const flat = records.map((record) => ({
-    "Facility": record.facility_name ?? "",
-    "Items & quantities": itemsToText(record.items),
-    "Item count": record.items.length,
-    "Amount paid": record.amount_paid ?? "",
-    "Currency": record.currency ?? "",
-    "Date of request": record.request_date ?? "",
-    "Date of payment": record.payment_date ?? "",
-    "Contact name": record.requester_name ?? "",
-    "Contact phone": record.requester_phone ?? "",
-    "Status": record.status,
-    "Confidence": record.confidence ?? "",
-    "Needs review": record.needs_review ? "Yes" : "No",
-    "Notes": record.notes ?? "",
-  }));
+  const flat = records.map((record) => {
+    const issues = record.issues ?? [];
+    return {
+      "Facility": record.facility_name ?? "",
+      "Items & quantities": itemsToText(record.items),
+      "Item count": record.items.length,
+      "Amount paid": record.amount_paid ?? "",
+      "Currency": record.currency ?? "",
+      "Date of request": record.request_date ?? "",
+      "Date of payment": record.payment_date ?? "",
+      "Contact name": record.requester_name ?? "",
+      "Contact phone": record.requester_phone ?? "",
+      "Status": record.status,
+      "Confidence": record.confidence ?? "",
+      "Needs review": record.needs_review ? "Yes" : "No",
+      "Data issues": issues.filter((issue) => issue.level === "error").length,
+      "Data warnings": issues.filter((issue) => issue.level === "warning").length,
+      "Issue detail": issuesToText(issues),
+      "Notes": record.notes ?? "",
+    };
+  });
 
   const sheet = XLSX.utils.json_to_sheet(flat);
   sheet["!cols"] = [
@@ -56,8 +64,12 @@ export function exportRecordsToXlsx(records: ExportRecord[], filename: string) {
     { wch: 12 },
     { wch: 11 },
     { wch: 13 },
+    { wch: 12 },
+    { wch: 13 },
+    { wch: 54 },
     { wch: 40 },
   ];
+
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, "Requests");
