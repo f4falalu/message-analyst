@@ -3,6 +3,15 @@
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const MODEL = "google/gemini-3.6-flash";
 
+export type FieldConfidence = {
+  facility_name: number | null;
+  items: number | null;
+  total_amount: number | null;
+  document_date: number | null;
+  payment_date: number | null;
+  contact: number | null;
+};
+
 export type ExtractedDoc = {
   doc_type: "request" | "receipt" | "invoice" | "other";
   facility_name: string | null;
@@ -16,6 +25,7 @@ export type ExtractedDoc = {
   reference: string | null;
   raw_text: string;
   confidence: number;
+  field_confidence: FieldConfidence;
 };
 
 const SYSTEM_PROMPT = `You read scanned procurement paperwork exchanged over WhatsApp: supply requests, requisitions, invoices, receipts, payment confirmations and hand-written notes from health facilities.
