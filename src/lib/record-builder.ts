@@ -2,6 +2,7 @@
 // into request records. No I/O so it can be unit-reasoned and reused.
 
 import type { ExtractedDoc } from "./doc-reader.server";
+import { normaliseRecordNames, validateRecord, type Issue, type Mapping } from "./data-rules";
 
 export type BuilderMessage = {
   id: string;
@@ -30,6 +31,7 @@ export type BuiltRecord = {
   status: "requested" | "paid" | "unclear";
   confidence: number;
   needs_review: boolean;
+  issues: Issue[];
   notes: string | null;
   sources: { kind: "message" | "attachment"; message_id?: string; attachment_id?: string }[];
 };
