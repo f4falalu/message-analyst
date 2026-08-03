@@ -10,7 +10,9 @@ import {
   retryFailedAttachments,
   startProcessingRun,
   getAttachmentPreview,
+  reprocessAttachment,
 } from "@/lib/processing.functions";
+
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
 import { Button } from "@/components/ui/button";
