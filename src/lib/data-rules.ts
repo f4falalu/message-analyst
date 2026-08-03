@@ -8,7 +8,17 @@ export type Mapping = {
 };
 
 export type Issue = {
-  field: "facility" | "items" | "quantity" | "amount" | "payment_date" | "request_date" | "contact" | "confidence";
+  field:
+    | "facility"
+    | "items"
+    | "quantity"
+    | "amount"
+    | "payment_date"
+    | "request_date"
+    | "contact"
+    | "confidence"
+    | "source_match";
+
   level: "error" | "warning";
   message: string;
 };
@@ -200,4 +210,149 @@ export function validateRecord(record: ValidatableRecord, today = new Date()): I
 
 export function issuesToText(issues: Issue[]): string {
   return issues.map((issue) => `${issue.level === "error" ? "!" : "?"} ${issue.message}`).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Cross-source checks: chat.txt facts vs fields read off the attachment.
+// These catch a scan that was filed under the wrong conversation, a document
+// signed by someone other than the sender, or a date that drifted.
+// ---------------------------------------------------------------------------
+
+export type ChatFacts = {
+  /** Sender label on the message the file arrived with. */
+  sender: string | null;
+  /** Phone number visible in the sender label or nearby text. */
+  senderPhone: string | null;
+  /** Date the file was sent, YYYY-MM-DD. */
+  sentDate: string | null;
+  /** Body text of the messages around the attachment. */
+  contextText: string;
+};
+
+export type DocFacts = {
+  facility_name: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  document_date: string | null;
+  payment_date: string | null;
+};
+
+const FACILITY_PHRASE =
+  /([A-Za-z][A-Za-z'.\- ]{2,40}?\s(?:health\s*(?:centre|center|post|facility)|hospital|clinic|dispensary|hc|phc))\b/gi;
+
+function digits(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+function phonesMatch(a: string, b: string): boolean {
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  return shorter.length >= 7 && longer.endsWith(shorter.slice(-9));
+}
+
+function nameOverlap(a: string, b: string): boolean {
+  const partsA = new Set(matchKey(a).split(" ").filter((part) => part.length > 2));
+  const partsB = matchKey(b).split(" ").filter((part) => part.length > 2);
+  return partsB.some((part) => partsA.has(part));
+}
+
+function dayGap(a: string, b: string): number | null {
+  const first = Date.parse(a);
+  const second = Date.parse(b);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+  return Math.round((second - first) / 86_400_000);
+}
+
+/** Facility-looking names written in the chat around the attachment. */
+export function facilitiesInText(text: string): string[] {
+  const found = new Set<string>();
+  for (const match of text.matchAll(FACILITY_PHRASE)) {
+    const value = match[1]?.replace(/\s+/g, " ").trim();
+    if (value) found.add(value);
+  }
+  return [...found];
+}
+
+/**
+ * Compares what the chat says with what was read off the file and returns
+ * plain-language flags for every disagreement.
+ */
+export function crossCheckSources(chat: ChatFacts, doc: DocFacts, mappings: Mapping[] = []): Issue[] {
+  const issues: Issue[] = [];
+  const add = (message: string, level: Issue["level"] = "warning") =>
+    issues.push({ field: "source_match", level, message });
+
+  const contextText = chat.contextText ?? "";
+  const contextKey = ` ${matchKey(contextText)} `;
+
+  // Facility ------------------------------------------------------------
+  const docFacility = applyMapping(doc.facility_name, "facility", mappings);
+  const chatFacilities = facilitiesInText(contextText).map(
+    (name) => applyMapping(name, "facility", mappings) ?? name,
+  );
+  if (docFacility) {
+    const docKey = matchKey(docFacility);
+    const mentioned =
+      contextKey.includes(` ${docKey} `) ||
+      chatFacilities.some((name) => matchKey(name) === docKey || nameOverlap(name, docFacility));
+    if (chatFacilities.length > 0 && !mentioned) {
+      add(
+        `Facility mismatch: the file says "${docFacility}" but the chat around it mentions ${chatFacilities
+          .map((name) => `"${name}"`)
+          .join(", ")}`,
+        "error",
+      );
+    } else if (chatFacilities.length === 0 && !mentioned && contextKey.trim().length > 10) {
+      add(`Facility "${docFacility}" is not mentioned anywhere in the surrounding chat`);
+    }
+  } else if (chatFacilities.length > 0) {
+    add(`No facility was read from the file, but the chat mentions "${chatFacilities[0]}"`);
+  }
+
+  // Requester name ------------------------------------------------------
+  if (doc.contact_name && chat.sender) {
+    if (!nameOverlap(doc.contact_name, chat.sender) && matchKey(doc.contact_name) !== matchKey(chat.sender)) {
+      const inChat = contextKey.includes(` ${matchKey(doc.contact_name)} `);
+      add(
+        `Requester mismatch: the file is from "${doc.contact_name}" but the message was sent by "${chat.sender}"${
+          inChat ? " (the name does appear elsewhere in the chat)" : ""
+        }`,
+        inChat ? "warning" : "error",
+      );
+    }
+  } else if (!doc.contact_name && chat.sender) {
+    add(`No requester on the file — falling back to the chat sender "${chat.sender}"`);
+  }
+
+  // Phone ---------------------------------------------------------------
+  const docPhone = digits(doc.contact_phone);
+  const chatPhone = digits(chat.senderPhone);
+  if (docPhone.length >= 7 && chatPhone.length >= 7 && !phonesMatch(docPhone, chatPhone)) {
+    add(`Contact mismatch: the file lists ${doc.contact_phone} but the chat number is ${chat.senderPhone}`);
+  }
+
+  // Dates ---------------------------------------------------------------
+  if (chat.sentDate) {
+    const checks: { label: string; value: string | null }[] = [
+      { label: "Document date", value: doc.document_date },
+      { label: "Payment date", value: doc.payment_date },
+    ];
+    for (const { label, value } of checks) {
+      if (!value) continue;
+      const gap = dayGap(value, chat.sentDate);
+      if (gap === null) continue;
+      if (gap < -1) {
+        add(`${label} on the file (${value}) is after the day it was sent in the chat (${chat.sentDate})`, "error");
+      } else if (gap > 60) {
+        add(`${label} on the file (${value}) is ${gap} days before it was shared in the chat (${chat.sentDate})`);
+      } else if (gap > 14) {
+        add(`${label} on the file (${value}) is ${gap} days older than the chat message (${chat.sentDate})`);
+      }
+    }
+    if (!doc.document_date && !doc.payment_date) {
+      add(`No date on the file — using the chat date ${chat.sentDate} instead`);
+    }
+  }
+
+  return issues;
 }

@@ -2,7 +2,14 @@
 // into request records. No I/O so it can be unit-reasoned and reused.
 
 import type { ExtractedDoc } from "./doc-reader.server";
-import { normaliseRecordNames, validateRecord, type Issue, type Mapping } from "./data-rules";
+import {
+  crossCheckSources,
+  normaliseRecordNames,
+  validateRecord,
+  type ChatFacts,
+  type Issue,
+  type Mapping,
+} from "./data-rules";
 
 export type BuilderMessage = {
   id: string;
@@ -32,6 +39,8 @@ export type BuiltRecord = {
   confidence: number;
   needs_review: boolean;
   issues: Issue[];
+  /** Disagreements between the chat transcript and the scanned file. */
+  crossIssues: Issue[];
   notes: string | null;
   sources: { kind: "message" | "attachment"; message_id?: string; attachment_id?: string }[];
 };
@@ -78,6 +87,29 @@ export function contextAround(
   const index = bySeq.get(seq);
   if (index === undefined) return [];
   return messages.slice(Math.max(0, index - radius), Math.min(messages.length, index + radius + 1));
+}
+
+function dedupeIssues(issues: Issue[]): Issue[] {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    if (seen.has(issue.message)) return false;
+    seen.add(issue.message);
+    return true;
+  });
+}
+
+/** What the chat transcript itself says around an attachment. */
+export function chatFactsFor(
+  anchor: BuilderMessage | undefined,
+  context: BuilderMessage[],
+  contextText: string,
+): ChatFacts {
+  return {
+    sender: anchor?.sender ?? null,
+    senderPhone: findPhone(anchor?.sender, contextText),
+    sentDate: toDateOnly(anchor?.sent_at ?? null) ?? toDateOnly(context[0]?.sent_at ?? null),
+    contextText,
+  };
 }
 
 export function buildRecords(
@@ -130,6 +162,11 @@ export function buildRecords(
       confidence: doc.confidence,
       needs_review: missing.length > 0 || doc.confidence < 0.6,
       issues: [],
+      crossIssues: crossCheckSources(
+        chatFactsFor(anchor, context, contextText),
+        doc,
+        mappings,
+      ),
       notes: missing.length ? `Missing from document: ${missing.join(", ")}.` : null,
       sources: [
         { kind: "attachment", attachment_id: attachment.id },
@@ -179,6 +216,13 @@ export function buildRecords(
       best.status = "paid";
       best.confidence = Math.min(best.confidence, doc.confidence);
       best.sources.push({ kind: "attachment", attachment_id: attachment.id });
+      best.crossIssues.push(
+        ...crossCheckSources(
+          chatFactsFor(anchor, context, context.map((m) => m.body ?? "").join("\n")),
+          doc,
+          mappings,
+        ),
+      );
       if (bestScore < 5) {
         best.needs_review = true;
         best.notes = [best.notes, "Payment matched to this request with partial evidence."]
@@ -199,6 +243,11 @@ export function buildRecords(
         confidence: doc.confidence,
         needs_review: true,
         issues: [],
+        crossIssues: crossCheckSources(
+          chatFactsFor(anchor, context, context.map((m) => m.body ?? "").join("\n")),
+          doc,
+          mappings,
+        ),
         notes: "Payment document with no matching request found in the chat.",
         sources: [
           { kind: "attachment", attachment_id: attachment.id },
@@ -242,7 +291,7 @@ export function buildRecords(
   // every record carries readable flags before it reaches the spreadsheet.
   return records.map((record) => {
     const mapped = normaliseRecordNames(record, mappings);
-    const issues = validateRecord(mapped);
+    const issues = [...validateRecord(mapped), ...dedupeIssues(mapped.crossIssues)];
     return {
       ...mapped,
       issues,
