@@ -54,6 +54,7 @@ function Home() {
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [uploadedCounts, setUploadedCounts] = useState<Record<string, number>>({});
   const [resumeId, setResumeId] = useState<string | null>(null);
+  const [activeImportId, setActiveImportId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
