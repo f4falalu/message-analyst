@@ -77,6 +77,18 @@ type MessageRow = {
 
 type Counts = { pending: number; done: number; error: number; skipped: number };
 
+type FileRow = {
+  id: string;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  ocr_status: string;
+  ocr_error: string | null;
+  message_seq: number | null;
+  processed_at: string | null;
+};
+
+
 type RunRow = {
   id: string;
   status: string;
