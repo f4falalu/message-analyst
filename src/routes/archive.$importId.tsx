@@ -10,7 +10,9 @@ import {
   retryFailedAttachments,
   startProcessingRun,
   getAttachmentPreview,
+  reprocessAttachment,
 } from "@/lib/processing.functions";
+
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
 import { Button } from "@/components/ui/button";
@@ -96,7 +98,18 @@ type Preview = {
   url: string | null;
 };
 
+type LiveFile = {
+  attachmentId: string;
+  filename: string;
+  outcome: string;
+  confidence: number | null;
+  durationMs: number;
+  attempts: number;
+  error: string | null;
+};
+
 type EventRow = {
+
   id: string;
   attachment_id: string | null;
   filename: string;
@@ -187,6 +200,21 @@ function ArchivePage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventFilter, setEventFilter] = useState("all");
+  const [liveFiles, setLiveFiles] = useState<LiveFile[]>([]);
+  const [liveTotal, setLiveTotal] = useState(0);
+  const [liveDone, setLiveDone] = useState(0);
+  const [liveFailed, setLiveFailed] = useState(0);
+  const [liveStart, setLiveStart] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const runOne = useServerFn(reprocessAttachment);
+
+  useEffect(() => {
+    if (!reading) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [reading]);
+
 
   const [messageQuery, setMessageQuery] = useState("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -280,15 +308,25 @@ function ArchivePage() {
 
   const readAll = async () => {
     setReading(true);
+    setLiveFiles([]);
+    setLiveDone(0);
+    setLiveFailed(0);
+    setLiveStart(Date.now());
     const lanes = Number(concurrency);
     const chunk = Number(chunkSize);
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
     try {
-      const started = await beginRun({ data: { importId, concurrency: lanes, chunkSize: chunk } });
+      const started = await beginRun({
+        data: { importId, concurrency: lanes, chunkSize: chunk, retryFailed: true },
+      });
       runId = started.runId;
       setActiveRunId(runId);
+      setLiveTotal(started.totalFiles);
+      if (started.requeued > 0) {
+        toast.info(`${started.requeued.toLocaleString()} previously failed files were queued again.`);
+      }
       await loadRuns();
 
       // Each lane pulls its own chunk of files; the backend hands out
@@ -297,6 +335,11 @@ function ArchivePage() {
         for (;;) {
           if (stopped) return;
           const result = await runBatch({ data: { importId, limit: chunk, runId } });
+          if (result.files.length) {
+            setLiveFiles((current) => [...result.files, ...current].slice(0, 40));
+          }
+          setLiveDone((current) => current + result.processed);
+          setLiveFailed((current) => current + result.failed);
           void loadCounts();
           if (result.creditsExhausted) {
             stopped = true;
@@ -321,11 +364,42 @@ function ArchivePage() {
       if (runId) await endRun({ data: { runId, status: "error", notes: message } });
     } finally {
       setReading(false);
+      setLiveStart(null);
       void loadCounts();
       void loadRuns();
       void loadEvents(runId ?? activeRunId);
     }
   };
+
+  const reprocessFile = useCallback(
+    async (attachmentId: string | null) => {
+      if (!attachmentId) {
+        toast.error("This log entry has no stored file to reprocess.");
+        return;
+      }
+      setReprocessing(attachmentId);
+      try {
+        const result = await runOne({ data: { attachmentId, runId: activeRunId } });
+        if (result.ok) {
+          toast.success(`${result.filename} re-read successfully.`);
+        } else {
+          toast.error(result.error ?? "That file could not be read.");
+        }
+        void loadCounts();
+        void loadEvents(activeRunId);
+        if (preview?.id === attachmentId) {
+          const refreshed = await fetchPreview({ data: { attachmentId } });
+          setPreview(refreshed as Preview);
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not reprocess that file.");
+      } finally {
+        setReprocessing(null);
+      }
+    },
+    [runOne, activeRunId, loadCounts, loadEvents, preview?.id, fetchPreview],
+  );
+
 
 
   const build = async () => {
@@ -407,6 +481,23 @@ function ArchivePage() {
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
   const totalPaid = filtered.reduce((sum, record) => sum + (record.amount_paid ?? 0), 0);
 
+  const liveHandled = liveDone + liveFailed;
+  const livePercent = liveTotal ? Math.min(100, Math.round((liveHandled / liveTotal) * 100)) : readPercent;
+  const elapsedMs = liveStart ? nowTick - liveStart : 0;
+  const perFileMs = liveHandled > 0 && elapsedMs > 0 ? elapsedMs / liveHandled : 0;
+  const etaMs = perFileMs > 0 ? perFileMs * Math.max(0, liveTotal - liveHandled) : 0;
+  const formatDuration = (ms: number) => {
+    if (!ms || !Number.isFinite(ms)) return "—";
+    const totalSeconds = Math.round(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours) return `${hours}h ${minutes}m`;
+    if (minutes) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  };
+
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border/60">
@@ -483,11 +574,59 @@ function ArchivePage() {
               </Button>
             </div>
           </div>
-          <Progress className="mt-5" value={readPercent} />
-          <p className="mt-2 text-xs text-muted-foreground">
-            {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
-            {Number(concurrency) * Number(chunkSize)} documents read at once.
-          </p>
+          <Progress className="mt-5" value={reading ? livePercent : readPercent} />
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
+              {Number(concurrency) * Number(chunkSize)} documents read at once.
+            </span>
+            {reading ? (
+              <span className="text-foreground">
+                {liveHandled.toLocaleString()} / {liveTotal.toLocaleString()} files ·{" "}
+                {liveFailed.toLocaleString()} failed · elapsed {formatDuration(elapsedMs)} ·{" "}
+                {etaMs > 0 ? `about ${formatDuration(etaMs)} left` : "estimating…"}
+                {perFileMs > 0 ? ` · ${(perFileMs / 1000).toFixed(1)}s per file` : ""}
+              </span>
+            ) : null}
+          </div>
+
+          {reading || liveFiles.length > 0 ? (
+            <div className="mt-4 max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-3">
+              {liveFiles.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Waiting for the first file to come back…</p>
+              ) : (
+                liveFiles.map((file, index) => (
+                  <div
+                    key={`${file.attachmentId}-${index}`}
+                    className="flex flex-wrap items-center gap-2 text-xs"
+                  >
+                    <Badge variant={file.outcome === "done" ? "default" : "outline"}>{file.outcome}</Badge>
+                    <span className="max-w-[18rem] truncate font-mono">{file.filename}</span>
+                    <span className="text-muted-foreground">{(file.durationMs / 1000).toFixed(1)}s</span>
+                    {file.attempts > 1 ? (
+                      <span className="text-muted-foreground">retried {file.attempts - 1}×</span>
+                    ) : null}
+                    {file.confidence !== null ? (
+                      <span className="text-muted-foreground">{formatConfidence(file.confidence)}</span>
+                    ) : null}
+                    {file.error ? <span className="text-destructive">{file.error}</span> : null}
+                    {file.outcome !== "done" ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        disabled={reprocessing === file.attachmentId}
+                        onClick={() => void reprocessFile(file.attachmentId)}
+                      >
+                        {reprocessing === file.attachmentId ? "Reprocessing…" : "Reprocess"}
+                      </Button>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+
         </div>
       </section>
 
@@ -683,12 +822,14 @@ function ArchivePage() {
                     <TableHead>Confidence</TableHead>
                     <TableHead>Field confidence</TableHead>
                     <TableHead>Time</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visibleEvents.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
                         No log entries yet — run the reader to record one.
                       </TableCell>
                     </TableRow>
@@ -721,7 +862,21 @@ function ArchivePage() {
                         <TableCell className="text-xs text-muted-foreground">
                           {event.duration_ms ? `${(event.duration_ms / 1000).toFixed(1)}s` : "—"}
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={reprocessing === event.attachment_id || !event.attachment_id}
+                            onClick={(clickEvent) => {
+                              clickEvent.stopPropagation();
+                              void reprocessFile(event.attachment_id);
+                            }}
+                          >
+                            {reprocessing === event.attachment_id ? "Reprocessing…" : "Reprocess"}
+                          </Button>
+                        </TableCell>
                       </TableRow>
+
                     ))
                   )}
                 </TableBody>
@@ -784,6 +939,16 @@ function ArchivePage() {
                   {preview.ocrError}
                 </p>
               ) : null}
+
+              <Button
+                variant="outline"
+                disabled={reprocessing === preview.id}
+                onClick={() => void reprocessFile(preview.id)}
+              >
+                {reprocessing === preview.id ? "Reprocessing…" : "Reprocess this file"}
+              </Button>
+
+
 
               <div>
                 <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Text read from the file</h3>

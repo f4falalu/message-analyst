@@ -5,20 +5,34 @@ import type { Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
 
 export const startProcessingRun = createServerFn({ method: "POST" })
-  .inputValidator((input: { importId: string; concurrency: number; chunkSize: number; kind?: string }) => ({
+  .inputValidator((input: { importId: string; concurrency: number; chunkSize: number; kind?: string; retryFailed?: boolean }) => ({
     importId: String(input.importId),
     concurrency: Math.max(1, Math.min(8, Number(input.concurrency))),
     chunkSize: Math.max(1, Math.min(12, Number(input.chunkSize))),
     kind: String(input.kind ?? "ocr"),
+    retryFailed: input.retryFailed !== false,
   }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    let requeued = 0;
+    if (data.retryFailed) {
+      // Automatic retry: anything that failed or was left half-parsed goes
+      // back in the queue when a new run starts (including after a resume).
+      const { count } = await supabase
+        .from("attachments")
+        .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
+        .eq("import_id", data.importId)
+        .in("ocr_status", ["error", "processing"]);
+      requeued = count ?? 0;
+    }
 
     const { count } = await supabase
       .from("attachments")
       .select("id", { count: "exact", head: true })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
+
 
     const { data: run, error } = await supabase
       .from("processing_runs")
@@ -33,7 +47,7 @@ export const startProcessingRun = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error || !run) throw new Error(error?.message ?? "Could not start the run.");
-    return { runId: run.id, totalFiles: count ?? 0 };
+    return { runId: run.id, totalFiles: count ?? 0, requeued };
   });
 
 export const finishProcessingRun = createServerFn({ method: "POST" })
@@ -94,7 +108,23 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
         .select("id", { count: "exact", head: true })
         .eq("import_id", data.importId)
         .eq("ocr_status", "pending");
-      return { processed: 0, failed: 0, remaining: count ?? 0, rateLimited: false, creditsExhausted: false };
+      return {
+        processed: 0,
+        failed: 0,
+        remaining: count ?? 0,
+        rateLimited: false,
+        creditsExhausted: false,
+        files: [] as {
+          attachmentId: string;
+          filename: string;
+          outcome: string;
+          confidence: number | null;
+          durationMs: number;
+          attempts: number;
+          error: string | null;
+        }[],
+      };
+
     }
 
     let processed = 0;
@@ -115,6 +145,18 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       error: string | null;
     };
     const events: EventRow[] = [];
+
+    type FileResult = {
+      attachmentId: string;
+      filename: string;
+      outcome: string;
+      confidence: number | null;
+      durationMs: number;
+      attempts: number;
+      error: string | null;
+    };
+    const files: FileResult[] = [];
+
 
     await Promise.all(
       pending.map(async (attachment) => {
@@ -140,13 +182,37 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               .slice(0, 3000);
           }
 
-          const extracted = await readDocument({
-            apiKey,
-            mimeType: attachment.mime_type ?? "application/octet-stream",
-            filename: attachment.filename,
-            signedUrl: signed.signedUrl,
-            chatContext,
-          });
+          // Automatic retry: transient failures (rate limits, network, gateway
+          // hiccups) get up to two extra attempts before the file is marked failed.
+          let extracted: Awaited<ReturnType<typeof readDocument>> | null = null;
+          let attempts = 0;
+          let lastTransient = "";
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            attempts = attempt;
+            try {
+              extracted = await readDocument({
+                apiKey,
+                mimeType: attachment.mime_type ?? "application/octet-stream",
+                filename: attachment.filename,
+                signedUrl: signed.signedUrl,
+                chatContext,
+              });
+              break;
+            } catch (readError) {
+              const text = readError instanceof Error ? readError.message : String(readError);
+              const transient =
+                text.includes("[429]") ||
+                text.includes("[500]") ||
+                text.includes("[502]") ||
+                text.includes("[503]") ||
+                text.includes("[504]") ||
+                /fetch failed|network|timeout|aborted/i.test(text);
+              if (!transient || attempt === 3) throw readError;
+              lastTransient = text;
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
+            }
+          }
+          if (!extracted) throw new Error(lastTransient || "The document could not be read.");
 
           const { error: updateError } = await supabase
             .from("attachments")
@@ -160,6 +226,15 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             .eq("id", attachment.id);
           if (updateError) throw new Error(updateError.message);
           processed += 1;
+          files.push({
+            attachmentId: attachment.id,
+            filename: attachment.filename,
+            outcome: "done",
+            confidence: extracted.confidence,
+            durationMs: Date.now() - startedAt,
+            attempts,
+            error: null,
+          });
 
           if (data.runId) {
             events.push({
@@ -172,9 +247,10 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               confidence: extracted.confidence,
               field_confidence: extracted.field_confidence as unknown as Json,
               duration_ms: Date.now() - startedAt,
-              error: null,
+              error: attempts > 1 ? `Recovered after ${attempts} attempts` : null,
             });
           }
+
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("[429]")) rateLimited = true;
@@ -189,6 +265,18 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               processed_at: new Date().toISOString(),
             })
             .eq("id", attachment.id);
+
+          files.push({
+            attachmentId: attachment.id,
+            filename: attachment.filename,
+            outcome: requeued ? "requeued" : "error",
+            confidence: null,
+            durationMs: Date.now() - startedAt,
+            attempts: 1,
+            error: message.slice(0, 300),
+          });
+
+
 
           if (data.runId) {
             events.push({
@@ -218,8 +306,105 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
 
-    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted };
+    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted, files };
   });
+
+export const reprocessAttachment = createServerFn({ method: "POST" })
+  .inputValidator((input: { attachmentId: string; runId?: string | null }) => ({
+    attachmentId: String(input.attachmentId),
+    runId: input.runId ? String(input.runId) : null,
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    const apiKey = process.env["LOVABLE_API_KEY"];
+    if (!apiKey) throw new Error("AI is not configured for this project.");
+
+    const { data: attachment, error } = await supabase
+      .from("attachments")
+      .select("id, import_id, filename, storage_path, mime_type, message_seq")
+      .eq("id", data.attachmentId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!attachment) throw new Error("That file is no longer in the archive.");
+
+    const startedAt = Date.now();
+    try {
+      const { data: signed, error: signError } = await supabase.storage
+        .from("wa-archive")
+        .createSignedUrl(attachment.storage_path, 900);
+      if (signError || !signed?.signedUrl) throw new Error(signError?.message ?? "Could not sign file URL");
+
+      let chatContext = "";
+      if (attachment.message_seq !== null) {
+        const { data: nearby } = await supabase
+          .from("messages")
+          .select("sent_at, sender, body")
+          .eq("import_id", attachment.import_id)
+          .gte("seq", attachment.message_seq - 3)
+          .lte("seq", attachment.message_seq + 3)
+          .order("seq", { ascending: true });
+        chatContext = (nearby ?? [])
+          .map((m) => `${m.sent_at ?? ""} ${m.sender ?? ""}: ${(m.body ?? "").slice(0, 400)}`)
+          .join("\n")
+          .slice(0, 3000);
+      }
+
+      const extracted = await readDocument({
+        apiKey,
+        mimeType: attachment.mime_type ?? "application/octet-stream",
+        filename: attachment.filename,
+        signedUrl: signed.signedUrl,
+        chatContext,
+      });
+
+      await supabase
+        .from("attachments")
+        .update({
+          ocr_status: "done",
+          ocr_error: null,
+          raw_text: extracted.raw_text,
+          extracted: extracted as unknown as Json,
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", attachment.id);
+
+      if (data.runId) {
+        await supabase.from("processing_events").insert({
+          run_id: data.runId,
+          import_id: attachment.import_id,
+          attachment_id: attachment.id,
+          filename: attachment.filename,
+          outcome: "done",
+          doc_type: extracted.doc_type,
+          confidence: extracted.confidence,
+          field_confidence: extracted.field_confidence as unknown as Json,
+          duration_ms: Date.now() - startedAt,
+          error: "Manual reprocess",
+        });
+      }
+
+      return { ok: true, filename: attachment.filename, confidence: extracted.confidence, error: null as string | null };
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      await supabase
+        .from("attachments")
+        .update({ ocr_status: "error", ocr_error: message.slice(0, 800), processed_at: new Date().toISOString() })
+        .eq("id", attachment.id);
+      if (data.runId) {
+        await supabase.from("processing_events").insert({
+          run_id: data.runId,
+          import_id: attachment.import_id,
+          attachment_id: attachment.id,
+          filename: attachment.filename,
+          outcome: "error",
+          duration_ms: Date.now() - startedAt,
+          error: message.slice(0, 800),
+        });
+      }
+      return { ok: false, filename: attachment.filename, confidence: null, error: message.slice(0, 300) };
+    }
+  });
+
 
 export const retryFailedAttachments = createServerFn({ method: "POST" })
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
