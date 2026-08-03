@@ -98,7 +98,18 @@ type Preview = {
   url: string | null;
 };
 
+type LiveFile = {
+  attachmentId: string;
+  filename: string;
+  outcome: string;
+  confidence: number | null;
+  durationMs: number;
+  attempts: number;
+  error: string | null;
+};
+
 type EventRow = {
+
   id: string;
   attachment_id: string | null;
   filename: string;
