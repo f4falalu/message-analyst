@@ -154,13 +154,37 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               .slice(0, 3000);
           }
 
-          const extracted = await readDocument({
-            apiKey,
-            mimeType: attachment.mime_type ?? "application/octet-stream",
-            filename: attachment.filename,
-            signedUrl: signed.signedUrl,
-            chatContext,
-          });
+          // Automatic retry: transient failures (rate limits, network, gateway
+          // hiccups) get up to two extra attempts before the file is marked failed.
+          let extracted: Awaited<ReturnType<typeof readDocument>> | null = null;
+          let attempts = 0;
+          let lastTransient = "";
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            attempts = attempt;
+            try {
+              extracted = await readDocument({
+                apiKey,
+                mimeType: attachment.mime_type ?? "application/octet-stream",
+                filename: attachment.filename,
+                signedUrl: signed.signedUrl,
+                chatContext,
+              });
+              break;
+            } catch (readError) {
+              const text = readError instanceof Error ? readError.message : String(readError);
+              const transient =
+                text.includes("[429]") ||
+                text.includes("[500]") ||
+                text.includes("[502]") ||
+                text.includes("[503]") ||
+                text.includes("[504]") ||
+                /fetch failed|network|timeout|aborted/i.test(text);
+              if (!transient || attempt === 3) throw readError;
+              lastTransient = text;
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
+            }
+          }
+          if (!extracted) throw new Error(lastTransient || "The document could not be read.");
 
           const { error: updateError } = await supabase
             .from("attachments")
@@ -174,6 +198,15 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             .eq("id", attachment.id);
           if (updateError) throw new Error(updateError.message);
           processed += 1;
+          files.push({
+            attachmentId: attachment.id,
+            filename: attachment.filename,
+            outcome: "done",
+            confidence: extracted.confidence,
+            durationMs: Date.now() - startedAt,
+            attempts,
+            error: null,
+          });
 
           if (data.runId) {
             events.push({
@@ -186,9 +219,10 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               confidence: extracted.confidence,
               field_confidence: extracted.field_confidence as unknown as Json,
               duration_ms: Date.now() - startedAt,
-              error: null,
+              error: attempts > 1 ? `Recovered after ${attempts} attempts` : null,
             });
           }
+
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("[429]")) rateLimited = true;
