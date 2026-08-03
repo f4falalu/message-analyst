@@ -59,7 +59,7 @@ async function existingAttachmentNames(importId: string): Promise<Set<string>> {
 export async function ingestZip(
   file: File,
   onProgress: (progress: IngestProgress) => void,
-  options: { resumeImportId?: string } = {},
+  options: { resumeImportId?: string; control?: IngestControl } = {},
 ): Promise<{
   importId: string;
   messages: number;
@@ -67,7 +67,12 @@ export async function ingestZip(
   readable: number;
   skipped: number;
   failed: string[];
+  cancelled: boolean;
 }> {
+  const control = options.control;
+  const isCancelled = () => control?.isCancelled() === true;
+  const isPaused = () => control?.isPaused() === true;
+
 
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
