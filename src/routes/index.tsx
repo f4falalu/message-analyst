@@ -217,6 +217,21 @@ function Home() {
                     <span>·</span>
                     <span>{row.total_files.toLocaleString()} files</span>
                   </div>
+                  {row.total_files > 0 ? (
+                    <div className="space-y-1">
+                      <Progress
+                        value={Math.min(100, Math.round(((uploadedCounts[row.id] ?? 0) / row.total_files) * 100))}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {(uploadedCounts[row.id] ?? 0).toLocaleString()} of {row.total_files.toLocaleString()} files
+                        uploaded
+                        {(uploadedCounts[row.id] ?? 0) < row.total_files
+                          ? ` · ${(row.total_files - (uploadedCounts[row.id] ?? 0)).toLocaleString()} remaining`
+                          : ""}
+                      </p>
+                    </div>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline" size="sm">
                       <Link to="/archive/$importId" params={{ importId: row.id }}>
