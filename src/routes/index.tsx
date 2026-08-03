@@ -54,6 +54,7 @@ function Home() {
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [uploadedCounts, setUploadedCounts] = useState<Record<string, number>>({});
   const [resumeId, setResumeId] = useState<string | null>(null);
+  const [activeImportId, setActiveImportId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -110,6 +111,7 @@ function Home() {
     pausedRef.current = false;
     cancelledRef.current = false;
     const importId = resumeId ?? (await rememberedImportId(file));
+    setActiveImportId(importId);
     if (!resumeId && importId) {
       toast.info("Picking up where this zip left off — already uploaded files are kept.");
     }
@@ -153,6 +155,7 @@ function Home() {
       cancelledRef.current = false;
       setProgress(null);
       setResumeId(null);
+      setActiveImportId(null);
     }
   };
 
@@ -314,13 +317,56 @@ function Home() {
                     </div>
                   ) : null}
 
+                  {busy && activeImportId === row.id ? (
+                    <p className="text-xs text-muted-foreground">
+                      {paused ? "Paused" : progress?.message ?? "Uploading…"}
+                    </p>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline" size="sm">
                       <Link to="/archive/$importId" params={{ importId: row.id }}>
                         Open archive
                       </Link>
                     </Button>
-                    {row.status !== "ready" ? (
+                    {busy && activeImportId === row.id ? (
+                      <>
+                        {paused ? (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              pausedRef.current = false;
+                              setPaused(false);
+                            }}
+                          >
+                            Resume
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              pausedRef.current = true;
+                              setPaused(true);
+                            }}
+                          >
+                            Pause
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            cancelledRef.current = true;
+                            pausedRef.current = false;
+                            setPaused(false);
+                            toast.info("Stopping after the files in flight finish…");
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    ) : row.status !== "ready" ? (
                       <Button
                         variant="ghost"
                         size="sm"
