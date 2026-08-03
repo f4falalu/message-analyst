@@ -54,6 +54,9 @@ function Home() {
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [uploadedCounts, setUploadedCounts] = useState<Record<string, number>>({});
   const [resumeId, setResumeId] = useState<string | null>(null);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     supabase
@@ -87,10 +90,20 @@ function Home() {
       return;
     }
     setBusy(true);
+    setPaused(false);
+    pausedRef.current = false;
+    cancelledRef.current = false;
     const importId = resumeId;
     try {
-      const result = await ingestZip(file, setProgress, importId ? { resumeImportId: importId } : {});
-      if (result.failed.length > 0) {
+      const result = await ingestZip(file, setProgress, {
+        ...(importId ? { resumeImportId: importId } : {}),
+        control: { isPaused: () => pausedRef.current, isCancelled: () => cancelledRef.current },
+      });
+      if (result.cancelled) {
+        toast.info(
+          `Upload stopped — ${(result.attachments + result.skipped).toLocaleString()} file(s) are saved. Resume with the same zip to finish.`,
+        );
+      } else if (result.failed.length > 0) {
         toast.warning(
           `${result.attachments.toLocaleString()} files uploaded, ${result.failed.length.toLocaleString()} failed — press “Resume upload” with the same zip to retry just those.`,
         );
@@ -101,7 +114,9 @@ function Home() {
             : `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
         );
       }
-      navigate({ to: "/archive/$importId", params: { importId: result.importId } });
+      if (!result.cancelled) {
+        navigate({ to: "/archive/$importId", params: { importId: result.importId } });
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -110,10 +125,14 @@ function Home() {
       );
     } finally {
       setBusy(false);
+      setPaused(false);
+      pausedRef.current = false;
+      cancelledRef.current = false;
       setProgress(null);
       setResumeId(null);
     }
   };
+
 
 
   const percent =
@@ -161,10 +180,50 @@ function Home() {
                 <div className="space-y-4">
                   <p className="text-sm text-foreground">{progress?.message ?? "Working…"}</p>
                   <Progress value={percent ?? undefined} />
+                  <div className="flex flex-wrap gap-2">
+                    {paused ? (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          pausedRef.current = false;
+                          setPaused(false);
+                        }}
+                      >
+                        Resume
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={cancelledRef.current}
+                        onClick={() => {
+                          pausedRef.current = true;
+                          setPaused(true);
+                        }}
+                      >
+                        Pause
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        cancelledRef.current = true;
+                        pausedRef.current = false;
+                        setPaused(false);
+                        toast.info("Stopping after the files in flight finish…");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Keep this tab open — the zip is unpacked here in your browser and streamed up file by file.
+                    {paused
+                      ? "Paused — nothing is being sent. Everything uploaded so far is already saved."
+                      : "Keep this tab open — the zip is unpacked here in your browser and streamed up file by file. Pausing or cancelling never loses uploaded files."}
                   </p>
                 </div>
+
               ) : (
                 <div className="space-y-4">
                   <p className="font-serif text-xl text-foreground">Choose your WhatsApp export</p>

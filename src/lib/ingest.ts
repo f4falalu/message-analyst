@@ -3,10 +3,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { guessMimeType, isReadable, parseChat } from "./wa-chat";
 
 export type IngestProgress = {
-  phase: "reading" | "parsing" | "uploading" | "indexing" | "done";
+  phase: "reading" | "parsing" | "uploading" | "indexing" | "paused" | "done";
   message: string;
   current: number;
   total: number;
+};
+
+/** Lets the UI pause or stop an upload that is already running. */
+export type IngestControl = {
+  isPaused: () => boolean;
+  isCancelled: () => boolean;
 };
 
 const BUCKET = "wa-archive";
@@ -14,6 +20,7 @@ const UPLOAD_CONCURRENCY = 3;
 const MAX_ATTEMPTS = 4;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
 
 function baseName(path: string): string {
@@ -52,7 +59,7 @@ async function existingAttachmentNames(importId: string): Promise<Set<string>> {
 export async function ingestZip(
   file: File,
   onProgress: (progress: IngestProgress) => void,
-  options: { resumeImportId?: string } = {},
+  options: { resumeImportId?: string; control?: IngestControl } = {},
 ): Promise<{
   importId: string;
   messages: number;
@@ -60,7 +67,12 @@ export async function ingestZip(
   readable: number;
   skipped: number;
   failed: string[];
+  cancelled: boolean;
 }> {
+  const control = options.control;
+  const isCancelled = () => control?.isCancelled() === true;
+  const isPaused = () => control?.isPaused() === true;
+
 
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
@@ -227,7 +239,30 @@ export async function ingestZip(
       });
     };
 
+    // Pause simply idles the workers between files; cancel lets them finish the
+    // file in flight and stop, so nothing is left half-written.
+    const waitWhilePaused = async () => {
+      let announced = false;
+      while (isPaused() && !isCancelled()) {
+        if (!announced) {
+          announced = true;
+          const done = uploaded + skipped + failed.length;
+          onProgress({
+            phase: "paused",
+            message: `Paused — ${done.toLocaleString()} of ${mediaEntries.length.toLocaleString()} files uploaded.`,
+            current: done,
+            total: mediaEntries.length,
+          });
+        }
+        await sleep(300);
+      }
+      if (announced && !isCancelled()) report();
+    };
+
     await runPool(todo, UPLOAD_CONCURRENCY, async (entry) => {
+      await waitWhilePaused();
+      if (isCancelled()) return;
+
       const getData = (entry as unknown as { getData?: (writer: BlobWriter) => Promise<Blob> }).getData;
       if (!getData) return;
       const filename = baseName(entry.filename);
@@ -263,6 +298,7 @@ export async function ingestZip(
             failed.push(filename);
             break;
           }
+          if (isCancelled()) break;
           await sleep(600 * 2 ** (attempt - 1));
         }
       }
@@ -274,23 +310,43 @@ export async function ingestZip(
     await flushing;
     report();
 
+    const cancelled = isCancelled();
+    const remaining = mediaEntries.length - (uploaded + skipped);
+
     await supabase
       .from("imports")
       .update({
-        status: failed.length ? "uploading" : "processing",
+        status: cancelled || failed.length ? "uploading" : "processing",
         total_files: mediaEntries.length,
-        notes: failed.length ? `${failed.length} file(s) failed to upload — resume to retry.` : null,
+        notes: cancelled
+          ? `Upload cancelled — ${remaining.toLocaleString()} file(s) left; resume to continue.`
+          : failed.length
+            ? `${failed.length} file(s) failed to upload — resume to retry.`
+            : null,
       })
       .eq("id", importId);
 
     onProgress({
       phase: "done",
-      message: failed.length ? `Upload finished with ${failed.length} failed file(s).` : "Upload complete.",
+      message: cancelled
+        ? `Upload cancelled — ${(uploaded + skipped).toLocaleString()} file(s) saved.`
+        : failed.length
+          ? `Upload finished with ${failed.length} failed file(s).`
+          : "Upload complete.",
       current: 1,
       total: 1,
     });
 
-    return { importId, messages: parsed.messages.length, attachments: saved, readable, skipped, failed };
+    return {
+      importId,
+      messages: parsed.messages.length,
+      attachments: saved,
+      readable,
+      skipped,
+      failed,
+      cancelled,
+    };
+
 
   } catch (error) {
     await supabase
