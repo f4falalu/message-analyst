@@ -194,7 +194,14 @@ export async function ingestZip(
 
     // Anything already stored from an earlier attempt is left alone, so an
     // interrupted upload picks up where it stopped.
+    onProgress({
+      phase: "uploading",
+      message: "Checking which files are already uploaded…",
+      current: 0,
+      total: mediaEntries.length,
+    });
     const alreadyStored = await existingAttachmentNames(importId);
+
     const todo = mediaEntries.filter((entry) => !alreadyStored.has(baseName(entry.filename).toLowerCase()));
     const skipped = mediaEntries.length - todo.length;
     if (skipped > 0) {
