@@ -481,6 +481,23 @@ function ArchivePage() {
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
   const totalPaid = filtered.reduce((sum, record) => sum + (record.amount_paid ?? 0), 0);
 
+  const liveHandled = liveDone + liveFailed;
+  const livePercent = liveTotal ? Math.min(100, Math.round((liveHandled / liveTotal) * 100)) : readPercent;
+  const elapsedMs = liveStart ? nowTick - liveStart : 0;
+  const perFileMs = liveHandled > 0 && elapsedMs > 0 ? elapsedMs / liveHandled : 0;
+  const etaMs = perFileMs > 0 ? perFileMs * Math.max(0, liveTotal - liveHandled) : 0;
+  const formatDuration = (ms: number) => {
+    if (!ms || !Number.isFinite(ms)) return "—";
+    const totalSeconds = Math.round(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours) return `${hours}h ${minutes}m`;
+    if (minutes) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  };
+
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border/60">
