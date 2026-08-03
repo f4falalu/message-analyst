@@ -862,7 +862,21 @@ function ArchivePage() {
                         <TableCell className="text-xs text-muted-foreground">
                           {event.duration_ms ? `${(event.duration_ms / 1000).toFixed(1)}s` : "—"}
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={reprocessing === event.attachment_id || !event.attachment_id}
+                            onClick={(clickEvent) => {
+                              clickEvent.stopPropagation();
+                              void reprocessFile(event.attachment_id);
+                            }}
+                          >
+                            {reprocessing === event.attachment_id ? "Reprocessing…" : "Reprocess"}
+                          </Button>
+                        </TableCell>
                       </TableRow>
+
                     ))
                   )}
                 </TableBody>
