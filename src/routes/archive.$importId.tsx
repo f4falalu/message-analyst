@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -11,7 +11,11 @@ import {
   startProcessingRun,
   getAttachmentPreview,
   reprocessAttachment,
+  listImportFiles,
+  requeueAttachments,
+  setAttachmentSkipped,
 } from "@/lib/processing.functions";
+
 
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
@@ -72,6 +76,18 @@ type MessageRow = {
 };
 
 type Counts = { pending: number; done: number; error: number; skipped: number };
+
+type FileRow = {
+  id: string;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  ocr_status: string;
+  ocr_error: string | null;
+  message_seq: number | null;
+  processed_at: string | null;
+};
+
 
 type RunRow = {
   id: string;
@@ -212,6 +228,43 @@ function ArchivePage() {
   const [reprocessing, setReprocessing] = useState<string | null>(null);
   const runOne = useServerFn(reprocessAttachment);
 
+  // Parse-run pause: lanes check this between chunks, and the flag survives a
+  // reload so a closed tab doesn't silently resume a run.
+  const pauseKey = `parse-paused:${importId}`;
+  const [parsePaused, setParsePaused] = useState(false);
+  const parsePausedRef = useRef(false);
+  const parseStoppedRef = useRef(false);
+  useEffect(() => {
+    const stored = typeof window !== "undefined" && window.localStorage.getItem(pauseKey) === "1";
+    parsePausedRef.current = stored;
+    setParsePaused(stored);
+  }, [pauseKey]);
+  const setPaused = useCallback(
+    (value: boolean) => {
+      parsePausedRef.current = value;
+      setParsePaused(value);
+      if (typeof window !== "undefined") {
+        if (value) window.localStorage.setItem(pauseKey, "1");
+        else window.localStorage.removeItem(pauseKey);
+      }
+    },
+    [pauseKey],
+  );
+
+  // Files tab
+  const loadFiles = useServerFn(listImportFiles);
+  const requeue = useServerFn(requeueAttachments);
+  const markSkipped = useServerFn(setAttachmentSkipped);
+  const [fileRows, setFileRows] = useState<FileRow[]>([]);
+  const [fileTotal, setFileTotal] = useState(0);
+  const [filePage, setFilePage] = useState(0);
+  const [fileStatus, setFileStatus] = useState("all");
+  const [fileSearch, setFileSearch] = useState("");
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const FILE_PAGE_SIZE = 50;
+
+
   useEffect(() => {
     if (!reading) return;
     const timer = setInterval(() => setNowTick(Date.now()), 1000);
@@ -309,7 +362,64 @@ function ArchivePage() {
     void loadEvents(activeRunId);
   }, [activeRunId, loadEvents]);
 
+  const refreshFiles = useCallback(async () => {
+    setFilesLoading(true);
+    try {
+      const result = await loadFiles({
+        data: { importId, status: fileStatus, search: fileSearch, page: filePage, pageSize: FILE_PAGE_SIZE },
+      });
+      setFileRows(result.files as FileRow[]);
+      setFileTotal(result.total);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load the file list.");
+    } finally {
+      setFilesLoading(false);
+    }
+  }, [importId, fileStatus, fileSearch, filePage, loadFiles]);
+
+  useEffect(() => {
+    void refreshFiles();
+  }, [refreshFiles]);
+
+  const requeueScope = async (scope: "failed" | "stuck" | "skipped") => {
+    try {
+      const result = await requeue({ data: { importId, scope } });
+      toast.success(`${result.requeued.toLocaleString()} file(s) moved back into the queue.`);
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not queue those files.");
+    }
+  };
+
+  const requeueOne = async (attachmentId: string) => {
+    setRowBusy(attachmentId);
+    try {
+      await requeue({ data: { importId, scope: "ids", attachmentIds: [attachmentId] } });
+      toast.success("Queued for another read.");
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not queue that file.");
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const skipOne = async (attachmentId: string) => {
+    setRowBusy(attachmentId);
+    try {
+      await markSkipped({ data: { attachmentId } });
+      toast.success("File will be left out of future runs.");
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not skip that file.");
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
   const readAll = async () => {
+    setPaused(false);
+    parseStoppedRef.current = false;
     setReading(true);
     setLiveFiles([]);
     setLiveDone(0);
@@ -320,6 +430,7 @@ function ArchivePage() {
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
+
     try {
       const started = await beginRun({
         data: { importId, concurrency: lanes, chunkSize: chunk, retryFailed: true },
@@ -337,7 +448,22 @@ function ArchivePage() {
       const lane = async () => {
         for (;;) {
           if (stopped) return;
+          if (parseStoppedRef.current) {
+            stopped = true;
+            stopReason = "Stopped by hand";
+            return;
+          }
+          // Pausing idles the lane between chunks — files already read stay read.
+          while (parsePausedRef.current && !parseStoppedRef.current) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          if (parseStoppedRef.current) {
+            stopped = true;
+            stopReason = "Stopped by hand";
+            return;
+          }
           const result = await runBatch({ data: { importId, limit: chunk, runId } });
+
           if (result.files.length) {
             setLiveFiles((current) => [...result.files, ...current].slice(0, 40));
           }
@@ -367,7 +493,11 @@ function ArchivePage() {
       if (runId) await endRun({ data: { runId, status: "error", notes: message } });
     } finally {
       setReading(false);
+      setPaused(false);
+      parseStoppedRef.current = false;
       setLiveStart(null);
+      void refreshFiles();
+
       void loadCounts();
       void loadRuns();
       void loadEvents(runId ?? activeRunId);
@@ -565,13 +695,30 @@ function ArchivePage() {
                 </Select>
               </div>
               <Button onClick={readAll} disabled={reading || counts.pending === 0}>
-                {reading ? "Reading…" : "Read pending documents"}
+                {reading ? (parsePaused ? "Paused" : "Reading…") : "Read pending documents"}
               </Button>
+              {reading ? (
+                <>
+                  <Button variant="outline" onClick={() => setPaused(!parsePaused)}>
+                    {parsePaused ? "Resume reading" : "Pause reading"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      parseStoppedRef.current = true;
+                      setPaused(false);
+                    }}
+                  >
+                    Stop
+                  </Button>
+                </>
+              ) : null}
               {counts.error > 0 ? (
                 <Button variant="outline" onClick={retry} disabled={reading}>
                   Retry failed
                 </Button>
               ) : null}
+
               <Button variant="secondary" onClick={build} disabled={building || counts.done === 0}>
                 {building ? "Building…" : "Build ledger"}
               </Button>
@@ -637,9 +784,149 @@ function ArchivePage() {
         <Tabs defaultValue="records">
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
             <TabsTrigger value="log">Run log</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="files" className="mt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Input
+                placeholder="Search file name…"
+                value={fileSearch}
+                onChange={(event) => {
+                  setFilePage(0);
+                  setFileSearch(event.target.value);
+                }}
+                className="max-w-xs"
+              />
+              <Select
+                value={fileStatus}
+                onValueChange={(value) => {
+                  setFilePage(0);
+                  setFileStatus(value);
+                }}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="pending">Waiting</SelectItem>
+                  <SelectItem value="processing">In progress</SelectItem>
+                  <SelectItem value="done">Read</SelectItem>
+                  <SelectItem value="error">Failed</SelectItem>
+                  <SelectItem value="skipped">Skipped</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={() => void requeueScope("failed")} disabled={counts.error === 0}>
+                Queue all failed
+              </Button>
+              <Button variant="outline" onClick={() => void requeueScope("stuck")}>
+                Unstick in-progress
+              </Button>
+              <Button variant="outline" onClick={() => void requeueScope("skipped")}>
+                Queue skipped
+              </Button>
+              <Button variant="ghost" onClick={() => void refreshFiles()} disabled={filesLoading}>
+                {filesLoading ? "Refreshing…" : "Refresh"}
+              </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-border/60">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3">File</th>
+                    <th className="px-4 py-3">State</th>
+                    <th className="px-4 py-3">Detail</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fileRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
+                        {filesLoading ? "Loading files…" : "No files match this filter."}
+                      </td>
+                    </tr>
+                  ) : (
+                    fileRows.map((row) => (
+                      <tr key={row.id} className="border-t border-border/50 align-top">
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            className="text-left font-medium text-foreground underline-offset-4 hover:underline"
+                            onClick={() => void openPreview(row.id)}
+                          >
+                            {row.filename}
+                          </button>
+                          <p className="text-xs text-muted-foreground">
+                            {row.mime_type ?? "unknown type"}
+                            {row.size_bytes ? ` · ${(row.size_bytes / 1024).toFixed(0)} KB` : ""}
+                            {row.message_seq != null ? ` · message #${row.message_seq}` : ""}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3 capitalize">{row.ocr_status}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          {row.ocr_error ?? (row.processed_at ? new Date(row.processed_at).toLocaleString() : "—")}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={rowBusy === row.id}
+                              onClick={() => void requeueOne(row.id)}
+                            >
+                              Queue again
+                            </Button>
+                            {row.ocr_status !== "skipped" ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={rowBusy === row.id}
+                                onClick={() => void skipOne(row.id)}
+                              >
+                                Skip
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                {fileTotal.toLocaleString()} file(s) · page {filePage + 1} of{" "}
+                {Math.max(1, Math.ceil(fileTotal / FILE_PAGE_SIZE))}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={filePage === 0}
+                  onClick={() => setFilePage((page) => Math.max(0, page - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={(filePage + 1) * FILE_PAGE_SIZE >= fileTotal}
+                  onClick={() => setFilePage((page) => page + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+
 
 
           <TabsContent value="records" className="mt-6 space-y-4">

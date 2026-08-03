@@ -84,6 +84,22 @@ function Home() {
       });
   }, [busy]);
 
+  // Remembers which import each zip belongs to, so dropping the same file
+  // again continues that import instead of starting a fresh one.
+  const zipKey = (file: File) => `zip-import:${file.name}:${file.size}`;
+
+  const rememberedImportId = async (file: File) => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(zipKey(file));
+    if (!stored) return null;
+    const { data } = await supabase.from("imports").select("id").eq("id", stored).maybeSingle();
+    if (!data) {
+      window.localStorage.removeItem(zipKey(file));
+      return null;
+    }
+    return data.id;
+  };
+
   const handleFile = async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".zip")) {
       toast.error("Please choose the WhatsApp .zip export.");
@@ -93,12 +109,19 @@ function Home() {
     setPaused(false);
     pausedRef.current = false;
     cancelledRef.current = false;
-    const importId = resumeId;
+    const importId = resumeId ?? (await rememberedImportId(file));
+    if (!resumeId && importId) {
+      toast.info("Picking up where this zip left off — already uploaded files are kept.");
+    }
     try {
       const result = await ingestZip(file, setProgress, {
         ...(importId ? { resumeImportId: importId } : {}),
         control: { isPaused: () => pausedRef.current, isCancelled: () => cancelledRef.current },
       });
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(zipKey(file), result.importId);
+      }
+
       if (result.cancelled) {
         toast.info(
           `Upload stopped — ${(result.attachments + result.skipped).toLocaleString()} file(s) are saved. Resume with the same zip to finish.`,

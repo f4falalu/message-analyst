@@ -497,6 +497,89 @@ export const getAttachmentPreview = createServerFn({ method: "POST" })
     };
   });
 
+/** Files in one import, with their queue state — powers the Files tab. */
+export const listImportFiles = createServerFn({ method: "POST" })
+  .inputValidator((input: { importId: string; status?: string; search?: string; page?: number; pageSize?: number }) => ({
+    importId: String(input.importId),
+    status: String(input.status ?? "all"),
+    search: String(input.search ?? "").trim(),
+    page: Math.max(0, Number(input.page ?? 0)),
+    pageSize: Math.max(10, Math.min(200, Number(input.pageSize ?? 50))),
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    let query = supabase
+      .from("attachments")
+      .select("id, filename, mime_type, size_bytes, ocr_status, ocr_error, message_seq, processed_at", {
+        count: "exact",
+      })
+      .eq("import_id", data.importId);
+
+    if (data.status !== "all") query = query.eq("ocr_status", data.status);
+    if (data.search) query = query.ilike("filename", `%${data.search}%`);
+
+    const from = data.page * data.pageSize;
+    const { data: rows, error, count } = await query
+      .order("filename", { ascending: true })
+      .range(from, from + data.pageSize - 1);
+    if (error) throw new Error(error.message);
+
+    return { files: rows ?? [], total: count ?? 0, page: data.page, pageSize: data.pageSize };
+  });
+
+/**
+ * Moves files back into the parse queue — either specific ones, everything that
+ * failed, or files a crashed run left stuck in "processing".
+ */
+export const requeueAttachments = createServerFn({ method: "POST" })
+  .inputValidator((input: { importId: string; attachmentIds?: string[]; scope?: string; runId?: string | null }) => ({
+    importId: String(input.importId),
+    attachmentIds: Array.isArray(input.attachmentIds) ? input.attachmentIds.map(String).slice(0, 500) : [],
+    scope: String(input.scope ?? "ids"),
+    runId: input.runId ? String(input.runId) : null,
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    let target = supabase
+      .from("attachments")
+      .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
+      .eq("import_id", data.importId);
+
+    if (data.scope === "failed") {
+      target = target.eq("ocr_status", "error");
+    } else if (data.scope === "stuck") {
+      // Left claimed by a run that died: still "processing" and untouched for a while.
+      const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
+      target = target.eq("ocr_status", "processing").or(`processed_at.is.null,processed_at.lt.${cutoff}`);
+    } else if (data.scope === "skipped") {
+      target = target.eq("ocr_status", "skipped");
+    } else {
+      if (data.attachmentIds.length === 0) return { requeued: 0 };
+      target = target.in("id", data.attachmentIds);
+    }
+
+    const { error, count } = await target.select("id, filename");
+    if (error) throw new Error(error.message);
+    return { requeued: count ?? 0 };
+  });
+
+/** Stops a junk file from being retried for good. */
+export const setAttachmentSkipped = createServerFn({ method: "POST" })
+  .inputValidator((input: { attachmentId: string; reason?: string }) => ({
+    attachmentId: String(input.attachmentId),
+    reason: String(input.reason ?? "Marked as skipped by hand").slice(0, 300),
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabase
+      .from("attachments")
+      .update({ ocr_status: "skipped", ocr_error: data.reason, processed_at: new Date().toISOString() })
+      .eq("id", data.attachmentId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 
 export const rebuildRecords = createServerFn({ method: "POST" })
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
