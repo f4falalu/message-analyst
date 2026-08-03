@@ -47,7 +47,7 @@ export const startProcessingRun = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error || !run) throw new Error(error?.message ?? "Could not start the run.");
-    return { runId: run.id, totalFiles: count ?? 0 };
+    return { runId: run.id, totalFiles: count ?? 0, requeued };
   });
 
 export const finishProcessingRun = createServerFn({ method: "POST" })
