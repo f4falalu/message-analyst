@@ -180,10 +180,50 @@ function Home() {
                 <div className="space-y-4">
                   <p className="text-sm text-foreground">{progress?.message ?? "Working…"}</p>
                   <Progress value={percent ?? undefined} />
+                  <div className="flex flex-wrap gap-2">
+                    {paused ? (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          pausedRef.current = false;
+                          setPaused(false);
+                        }}
+                      >
+                        Resume
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={cancelledRef.current}
+                        onClick={() => {
+                          pausedRef.current = true;
+                          setPaused(true);
+                        }}
+                      >
+                        Pause
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        cancelledRef.current = true;
+                        pausedRef.current = false;
+                        setPaused(false);
+                        toast.info("Stopping after the files in flight finish…");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Keep this tab open — the zip is unpacked here in your browser and streamed up file by file.
+                    {paused
+                      ? "Paused — nothing is being sent. Everything uploaded so far is already saved."
+                      : "Keep this tab open — the zip is unpacked here in your browser and streamed up file by file. Pausing or cancelling never loses uploaded files."}
                   </p>
                 </div>
+
               ) : (
                 <div className="space-y-4">
                   <p className="font-serif text-xl text-foreground">Choose your WhatsApp export</p>
