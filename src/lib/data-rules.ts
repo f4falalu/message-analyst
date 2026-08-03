@@ -8,7 +8,17 @@ export type Mapping = {
 };
 
 export type Issue = {
-  field: "facility" | "items" | "quantity" | "amount" | "payment_date" | "request_date" | "contact" | "confidence";
+  field:
+    | "facility"
+    | "items"
+    | "quantity"
+    | "amount"
+    | "payment_date"
+    | "request_date"
+    | "contact"
+    | "confidence"
+    | "source_match";
+
   level: "error" | "warning";
   message: string;
 };
