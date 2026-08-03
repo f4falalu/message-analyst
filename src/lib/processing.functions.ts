@@ -5,20 +5,34 @@ import type { Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
 
 export const startProcessingRun = createServerFn({ method: "POST" })
-  .inputValidator((input: { importId: string; concurrency: number; chunkSize: number; kind?: string }) => ({
+  .inputValidator((input: { importId: string; concurrency: number; chunkSize: number; kind?: string; retryFailed?: boolean }) => ({
     importId: String(input.importId),
     concurrency: Math.max(1, Math.min(8, Number(input.concurrency))),
     chunkSize: Math.max(1, Math.min(12, Number(input.chunkSize))),
     kind: String(input.kind ?? "ocr"),
+    retryFailed: input.retryFailed !== false,
   }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    let requeued = 0;
+    if (data.retryFailed) {
+      // Automatic retry: anything that failed or was left half-parsed goes
+      // back in the queue when a new run starts (including after a resume).
+      const { count } = await supabase
+        .from("attachments")
+        .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
+        .eq("import_id", data.importId)
+        .in("ocr_status", ["error", "processing"]);
+      requeued = count ?? 0;
+    }
 
     const { count } = await supabase
       .from("attachments")
       .select("id", { count: "exact", head: true })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
+
 
     const { data: run, error } = await supabase
       .from("processing_runs")
