@@ -111,6 +111,7 @@ function Home() {
     pausedRef.current = false;
     cancelledRef.current = false;
     const importId = resumeId ?? (await rememberedImportId(file));
+    setActiveImportId(importId);
     if (!resumeId && importId) {
       toast.info("Picking up where this zip left off — already uploaded files are kept.");
     }
