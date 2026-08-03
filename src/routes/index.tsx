@@ -155,7 +155,7 @@ function Home() {
       cancelledRef.current = false;
       setProgress(null);
       setResumeId(null);
-    }
+      setActiveImportId(null);
   };
 
 
