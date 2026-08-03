@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { readDocument } from "./doc-reader.server";
-import { buildRecords, type BuilderAttachment, type BuilderMessage } from "./record-builder";
-import type { Mapping } from "./data-rules";
+import { buildRecords, chatFactsFor, type BuilderAttachment, type BuilderMessage } from "./record-builder";
+import { crossCheckSources, type Issue, type Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
 
 export const startProcessingRun = createServerFn({ method: "POST" })
@@ -425,7 +425,9 @@ export const getAttachmentPreview = createServerFn({ method: "POST" })
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabase
       .from("attachments")
-      .select("id, filename, mime_type, storage_path, raw_text, extracted, ocr_status, ocr_error, size_bytes")
+      .select(
+        "id, import_id, message_seq, filename, mime_type, storage_path, raw_text, extracted, ocr_status, ocr_error, size_bytes",
+      )
       .eq("id", data.attachmentId)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -433,7 +435,56 @@ export const getAttachmentPreview = createServerFn({ method: "POST" })
 
     const { data: signed } = await supabase.storage.from("wa-archive").createSignedUrl(row.storage_path, 3600);
 
+    // Compare the chat transcript around this file with what was read off it.
+    let mismatches: Issue[] = [];
+    let chatContext: { seq: number; sent_at: string | null; sender: string | null; body: string | null }[] = [];
+    const extracted = (row.extracted ?? null) as {
+      facility_name: string | null;
+      contact_name: string | null;
+      contact_phone: string | null;
+      document_date: string | null;
+      payment_date: string | null;
+    } | null;
+
+    if (row.message_seq !== null) {
+      const { data: context } = await supabase
+        .from("messages")
+        .select("seq, sent_at, sender, body")
+        .eq("import_id", row.import_id)
+        .gte("seq", row.message_seq - 4)
+        .lte("seq", row.message_seq + 4)
+        .order("seq", { ascending: true });
+      chatContext = context ?? [];
+
+      if (extracted) {
+        const { data: mappingRows } = await supabase
+          .from("name_mappings")
+          .select("kind, pattern, canonical")
+          .eq("active", true)
+          .limit(5000);
+        const anchor = chatContext.find((message) => message.seq === row.message_seq);
+        const contextText = chatContext.map((message) => message.body ?? "").join("\n");
+        mismatches = crossCheckSources(
+          chatFactsFor(
+            anchor ? { id: "", seq: anchor.seq, sent_at: anchor.sent_at, sender: anchor.sender, body: anchor.body } : undefined,
+            chatContext.map((message) => ({ id: "", ...message })),
+            contextText,
+          ),
+          {
+            facility_name: extracted.facility_name ?? null,
+            contact_name: extracted.contact_name ?? null,
+            contact_phone: extracted.contact_phone ?? null,
+            document_date: extracted.document_date ?? null,
+            payment_date: extracted.payment_date ?? null,
+          },
+          (mappingRows ?? []) as Mapping[],
+        );
+      }
+    }
+
     return {
+      mismatches,
+      chatContext,
       id: row.id,
       filename: row.filename,
       mimeType: row.mime_type,
