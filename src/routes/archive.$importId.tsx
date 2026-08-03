@@ -362,7 +362,64 @@ function ArchivePage() {
     void loadEvents(activeRunId);
   }, [activeRunId, loadEvents]);
 
+  const refreshFiles = useCallback(async () => {
+    setFilesLoading(true);
+    try {
+      const result = await loadFiles({
+        data: { importId, status: fileStatus, search: fileSearch, page: filePage, pageSize: FILE_PAGE_SIZE },
+      });
+      setFileRows(result.files as FileRow[]);
+      setFileTotal(result.total);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load the file list.");
+    } finally {
+      setFilesLoading(false);
+    }
+  }, [importId, fileStatus, fileSearch, filePage, loadFiles]);
+
+  useEffect(() => {
+    void refreshFiles();
+  }, [refreshFiles]);
+
+  const requeueScope = async (scope: "failed" | "stuck" | "skipped") => {
+    try {
+      const result = await requeue({ data: { importId, scope } });
+      toast.success(`${result.requeued.toLocaleString()} file(s) moved back into the queue.`);
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not queue those files.");
+    }
+  };
+
+  const requeueOne = async (attachmentId: string) => {
+    setRowBusy(attachmentId);
+    try {
+      await requeue({ data: { importId, scope: "ids", attachmentIds: [attachmentId] } });
+      toast.success("Queued for another read.");
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not queue that file.");
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const skipOne = async (attachmentId: string) => {
+    setRowBusy(attachmentId);
+    try {
+      await markSkipped({ data: { attachmentId } });
+      toast.success("File will be left out of future runs.");
+      await Promise.all([loadCounts(), refreshFiles()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not skip that file.");
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
   const readAll = async () => {
+    setPaused(false);
+    parseStoppedRef.current = false;
     setReading(true);
     setLiveFiles([]);
     setLiveDone(0);
@@ -373,6 +430,7 @@ function ArchivePage() {
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
+
     try {
       const started = await beginRun({
         data: { importId, concurrency: lanes, chunkSize: chunk, retryFailed: true },
