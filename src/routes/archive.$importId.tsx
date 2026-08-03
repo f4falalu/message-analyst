@@ -493,7 +493,11 @@ function ArchivePage() {
       if (runId) await endRun({ data: { runId, status: "error", notes: message } });
     } finally {
       setReading(false);
+      setPaused(false);
+      parseStoppedRef.current = false;
       setLiveStart(null);
+      void refreshFiles();
+
       void loadCounts();
       void loadRuns();
       void loadEvents(runId ?? activeRunId);
