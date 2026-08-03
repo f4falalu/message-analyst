@@ -156,6 +156,7 @@ function Home() {
       setProgress(null);
       setResumeId(null);
       setActiveImportId(null);
+    }
   };
 
 
