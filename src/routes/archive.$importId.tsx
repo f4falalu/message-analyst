@@ -189,6 +189,21 @@ function ArchivePage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventFilter, setEventFilter] = useState("all");
+  const [liveFiles, setLiveFiles] = useState<LiveFile[]>([]);
+  const [liveTotal, setLiveTotal] = useState(0);
+  const [liveDone, setLiveDone] = useState(0);
+  const [liveFailed, setLiveFailed] = useState(0);
+  const [liveStart, setLiveStart] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const runOne = useServerFn(reprocessAttachment);
+
+  useEffect(() => {
+    if (!reading) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [reading]);
+
 
   const [messageQuery, setMessageQuery] = useState("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
