@@ -784,9 +784,149 @@ function ArchivePage() {
         <Tabs defaultValue="records">
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
             <TabsTrigger value="log">Run log</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="files" className="mt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Input
+                placeholder="Search file name…"
+                value={fileSearch}
+                onChange={(event) => {
+                  setFilePage(0);
+                  setFileSearch(event.target.value);
+                }}
+                className="max-w-xs"
+              />
+              <Select
+                value={fileStatus}
+                onValueChange={(value) => {
+                  setFilePage(0);
+                  setFileStatus(value);
+                }}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="pending">Waiting</SelectItem>
+                  <SelectItem value="processing">In progress</SelectItem>
+                  <SelectItem value="done">Read</SelectItem>
+                  <SelectItem value="error">Failed</SelectItem>
+                  <SelectItem value="skipped">Skipped</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={() => void requeueScope("failed")} disabled={counts.error === 0}>
+                Queue all failed
+              </Button>
+              <Button variant="outline" onClick={() => void requeueScope("stuck")}>
+                Unstick in-progress
+              </Button>
+              <Button variant="outline" onClick={() => void requeueScope("skipped")}>
+                Queue skipped
+              </Button>
+              <Button variant="ghost" onClick={() => void refreshFiles()} disabled={filesLoading}>
+                {filesLoading ? "Refreshing…" : "Refresh"}
+              </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-border/60">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3">File</th>
+                    <th className="px-4 py-3">State</th>
+                    <th className="px-4 py-3">Detail</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fileRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
+                        {filesLoading ? "Loading files…" : "No files match this filter."}
+                      </td>
+                    </tr>
+                  ) : (
+                    fileRows.map((row) => (
+                      <tr key={row.id} className="border-t border-border/50 align-top">
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            className="text-left font-medium text-foreground underline-offset-4 hover:underline"
+                            onClick={() => void openPreview(row.id)}
+                          >
+                            {row.filename}
+                          </button>
+                          <p className="text-xs text-muted-foreground">
+                            {row.mime_type ?? "unknown type"}
+                            {row.size_bytes ? ` · ${(row.size_bytes / 1024).toFixed(0)} KB` : ""}
+                            {row.message_seq != null ? ` · message #${row.message_seq}` : ""}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3 capitalize">{row.ocr_status}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          {row.ocr_error ?? (row.processed_at ? new Date(row.processed_at).toLocaleString() : "—")}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={rowBusy === row.id}
+                              onClick={() => void requeueOne(row.id)}
+                            >
+                              Queue again
+                            </Button>
+                            {row.ocr_status !== "skipped" ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={rowBusy === row.id}
+                                onClick={() => void skipOne(row.id)}
+                              >
+                                Skip
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                {fileTotal.toLocaleString()} file(s) · page {filePage + 1} of{" "}
+                {Math.max(1, Math.ceil(fileTotal / FILE_PAGE_SIZE))}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={filePage === 0}
+                  onClick={() => setFilePage((page) => Math.max(0, page - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={(filePage + 1) * FILE_PAGE_SIZE >= fileTotal}
+                  onClick={() => setFilePage((page) => page + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+
 
 
           <TabsContent value="records" className="mt-6 space-y-4">
