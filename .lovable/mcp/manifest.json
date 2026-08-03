@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "sdk_version": "0.26.1",
+  "path": "/mcp",
+  "auth": {
+    "type": "none"
+  },
+  "mcp": {
+    "server": {
+      "name": "chat-archive-hub",
+      "version": "0.1.0",
+      "title": "Chat Archive Hub"
+    },
+    "tools": [
+      {
+        "name": "list_imports",
+        "title": "List archive imports",
+        "description": "List WhatsApp chat exports (imports) held in the archive, with their status, message count and file count. Use the returned id as import_id for other tools.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "limit": {
+              "default": 20,
+              "description": "How many imports to return.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "search_records",
+        "title": "Search procurement records",
+        "description": "Search the extracted procurement ledger: facility name, items, amount paid, request/payment dates, requester contact, status and data issues. Filter by import, facility text, status, review flag or date range.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "import_id": {
+              "description": "Restrict to one import.",
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "facility": {
+              "description": "Case-insensitive substring of the facility name.",
+              "type": "string"
+            },
+            "status": {
+              "description": "Record status, e.g. 'paid' or 'pending'.",
+              "type": "string"
+            },
+            "needs_review": {
+              "description": "Only records flagged for human review.",
+              "type": "boolean"
+            },
+            "from_date": {
+              "description": "Earliest request date, YYYY-MM-DD.",
+              "type": "string"
+            },
+            "to_date": {
+              "description": "Latest request date, YYYY-MM-DD.",
+              "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_record",
+        "title": "Get record with sources",
+        "description": "Fetch one procurement record by id together with the chat messages and attachment files it was derived from, so the extraction can be audited.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "record_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "The request record id."
+            }
+          },
+          "required": [
+            "record_id"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "search_messages",
+        "title": "Search chat transcript",
+        "description": "Full-text substring search across the archived WhatsApp transcript, returning matching messages with sender, timestamp and any attached filename.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Text to look for in message bodies."
+            },
+            "import_id": {
+              "description": "Restrict to one import.",
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "limit": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "import_summary",
+        "title": "Summarise an import",
+        "description": "Processing and data-quality summary for one import: attachment OCR progress, record counts, records needing review, and total amount paid.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "import_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "The import to summarise."
+            }
+          },
+          "required": [
+            "import_id"
+          ]
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
