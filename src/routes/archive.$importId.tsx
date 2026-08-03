@@ -308,15 +308,25 @@ function ArchivePage() {
 
   const readAll = async () => {
     setReading(true);
+    setLiveFiles([]);
+    setLiveDone(0);
+    setLiveFailed(0);
+    setLiveStart(Date.now());
     const lanes = Number(concurrency);
     const chunk = Number(chunkSize);
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
     try {
-      const started = await beginRun({ data: { importId, concurrency: lanes, chunkSize: chunk } });
+      const started = await beginRun({
+        data: { importId, concurrency: lanes, chunkSize: chunk, retryFailed: true },
+      });
       runId = started.runId;
       setActiveRunId(runId);
+      setLiveTotal(started.totalFiles);
+      if (started.requeued > 0) {
+        toast.info(`${started.requeued.toLocaleString()} previously failed files were queued again.`);
+      }
       await loadRuns();
 
       // Each lane pulls its own chunk of files; the backend hands out
@@ -325,6 +335,11 @@ function ArchivePage() {
         for (;;) {
           if (stopped) return;
           const result = await runBatch({ data: { importId, limit: chunk, runId } });
+          if (result.files.length) {
+            setLiveFiles((current) => [...result.files, ...current].slice(0, 40));
+          }
+          setLiveDone((current) => current + result.processed);
+          setLiveFailed((current) => current + result.failed);
           void loadCounts();
           if (result.creditsExhausted) {
             stopped = true;
@@ -349,11 +364,42 @@ function ArchivePage() {
       if (runId) await endRun({ data: { runId, status: "error", notes: message } });
     } finally {
       setReading(false);
+      setLiveStart(null);
       void loadCounts();
       void loadRuns();
       void loadEvents(runId ?? activeRunId);
     }
   };
+
+  const reprocessFile = useCallback(
+    async (attachmentId: string | null) => {
+      if (!attachmentId) {
+        toast.error("This log entry has no stored file to reprocess.");
+        return;
+      }
+      setReprocessing(attachmentId);
+      try {
+        const result = await runOne({ data: { attachmentId, runId: activeRunId } });
+        if (result.ok) {
+          toast.success(`${result.filename} re-read successfully.`);
+        } else {
+          toast.error(result.error ?? "That file could not be read.");
+        }
+        void loadCounts();
+        void loadEvents(activeRunId);
+        if (preview?.id === attachmentId) {
+          const refreshed = await fetchPreview({ data: { attachmentId } });
+          setPreview(refreshed as Preview);
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not reprocess that file.");
+      } finally {
+        setReprocessing(null);
+      }
+    },
+    [runOne, activeRunId, loadCounts, loadEvents, preview?.id, fetchPreview],
+  );
+
 
 
   const build = async () => {
