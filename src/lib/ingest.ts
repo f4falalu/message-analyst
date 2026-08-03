@@ -95,8 +95,19 @@ export async function ingestZip(
   const mediaEntries = entries.filter((entry) => entry !== chatEntry);
 
   let importId: string;
+  let alreadyParsed = false;
   if (options.resumeImportId) {
     const { data: existing, error: existingError } = await supabase
+      .from("imports")
+      .select("id, chat_parsed, message_count")
+      .eq("id", options.resumeImportId)
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+    if (!existing) throw new Error("That import no longer exists — start a fresh upload.");
+    importId = existing.id;
+    alreadyParsed = existing.chat_parsed === true && existing.message_count === parsed.messages.length;
+
+    const { error: updateError } = await supabase
       .from("imports")
       .update({
         status: "uploading",
@@ -105,12 +116,8 @@ export async function ingestZip(
         chat_parsed: true,
         notes: null,
       })
-      .eq("id", options.resumeImportId)
-      .select("id")
-      .maybeSingle();
-    if (existingError) throw new Error(existingError.message);
-    if (!existing) throw new Error("That import no longer exists — start a fresh upload.");
-    importId = existing.id;
+      .eq("id", importId);
+    if (updateError) throw new Error(updateError.message);
   } else {
     const { data: importRow, error: importError } = await supabase
       .from("imports")
@@ -129,42 +136,54 @@ export async function ingestZip(
 
   try {
     // Messages + contacts first, so attachments can be linked by filename.
-    onProgress({
-      phase: "indexing",
-      message: `Saving ${parsed.messages.length.toLocaleString()} messages…`,
-      current: 0,
-      total: parsed.messages.length,
-    });
-
-    for (let i = 0; i < parsed.messages.length; i += 500) {
-      const slice = parsed.messages.slice(i, i + 500);
-      const { error } = await supabase.from("messages").upsert(
-        slice.map((message) => ({
-          import_id: importId,
-              seq: message.seq,
-          sent_at: message.sent_at,
-          sender: message.sender,
-          body: message.body,
-          attachment_filename: message.attachment_filename,
-        })),
-        { onConflict: "import_id,seq", ignoreDuplicates: true },
-      );
-      if (error) throw new Error(error.message);
+    // On a resume where the transcript is already stored, this whole stage is
+    // skipped — the run picks up straight at the remaining attachments.
+    if (alreadyParsed) {
       onProgress({
         phase: "indexing",
-        message: `Saving messages… ${Math.min(i + 500, parsed.messages.length).toLocaleString()} of ${parsed.messages.length.toLocaleString()}`,
-        current: Math.min(i + 500, parsed.messages.length),
+        message: `Transcript already saved — ${parsed.messages.length.toLocaleString()} messages kept.`,
+        current: parsed.messages.length,
         total: parsed.messages.length,
       });
+    } else {
+      onProgress({
+        phase: "indexing",
+        message: `Saving ${parsed.messages.length.toLocaleString()} messages…`,
+        current: 0,
+        total: parsed.messages.length,
+      });
+
+      for (let i = 0; i < parsed.messages.length; i += 500) {
+        const slice = parsed.messages.slice(i, i + 500);
+        const { error } = await supabase.from("messages").upsert(
+          slice.map((message) => ({
+            import_id: importId,
+            seq: message.seq,
+            sent_at: message.sent_at,
+            sender: message.sender,
+            body: message.body,
+            attachment_filename: message.attachment_filename,
+          })),
+          { onConflict: "import_id,seq", ignoreDuplicates: true },
+        );
+        if (error) throw new Error(error.message);
+        onProgress({
+          phase: "indexing",
+          message: `Saving messages… ${Math.min(i + 500, parsed.messages.length).toLocaleString()} of ${parsed.messages.length.toLocaleString()}`,
+          current: Math.min(i + 500, parsed.messages.length),
+          total: parsed.messages.length,
+        });
+      }
+
+      await supabase.from("contacts").delete().eq("import_id", importId);
+      if (parsed.contacts.length) {
+        const { error } = await supabase.from("contacts").insert(
+          parsed.contacts.map((contact) => ({ ...contact, import_id: importId })),
+        );
+        if (error) throw new Error(error.message);
+      }
     }
 
-    await supabase.from("contacts").delete().eq("import_id", importId);
-    if (parsed.contacts.length) {
-      const { error } = await supabase.from("contacts").insert(
-        parsed.contacts.map((contact) => ({ ...contact, import_id: importId })),
-      );
-      if (error) throw new Error(error.message);
-    }
 
     const seqByFilename = new Map<string, number>();
     for (const message of parsed.messages) {
