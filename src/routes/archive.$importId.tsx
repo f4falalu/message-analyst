@@ -96,7 +96,10 @@ type Preview = {
   rawText: string | null;
   extracted: unknown;
   url: string | null;
+  mismatches: Issue[];
+  chatContext: { seq: number; sent_at: string | null; sender: string | null; body: string | null }[];
 };
+
 
 type LiveFile = {
   attachmentId: string;
