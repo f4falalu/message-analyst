@@ -108,7 +108,23 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
         .select("id", { count: "exact", head: true })
         .eq("import_id", data.importId)
         .eq("ocr_status", "pending");
-      return { processed: 0, failed: 0, remaining: count ?? 0, rateLimited: false, creditsExhausted: false };
+      return {
+        processed: 0,
+        failed: 0,
+        remaining: count ?? 0,
+        rateLimited: false,
+        creditsExhausted: false,
+        files: [] as {
+          attachmentId: string;
+          filename: string;
+          outcome: string;
+          confidence: number | null;
+          durationMs: number;
+          attempts: number;
+          error: string | null;
+        }[],
+      };
+
     }
 
     let processed = 0;
