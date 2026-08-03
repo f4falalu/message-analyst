@@ -54,6 +54,9 @@ function Home() {
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [uploadedCounts, setUploadedCounts] = useState<Record<string, number>>({});
   const [resumeId, setResumeId] = useState<string | null>(null);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     supabase
@@ -87,10 +90,20 @@ function Home() {
       return;
     }
     setBusy(true);
+    setPaused(false);
+    pausedRef.current = false;
+    cancelledRef.current = false;
     const importId = resumeId;
     try {
-      const result = await ingestZip(file, setProgress, importId ? { resumeImportId: importId } : {});
-      if (result.failed.length > 0) {
+      const result = await ingestZip(file, setProgress, {
+        ...(importId ? { resumeImportId: importId } : {}),
+        control: { isPaused: () => pausedRef.current, isCancelled: () => cancelledRef.current },
+      });
+      if (result.cancelled) {
+        toast.info(
+          `Upload stopped — ${(result.attachments + result.skipped).toLocaleString()} file(s) are saved. Resume with the same zip to finish.`,
+        );
+      } else if (result.failed.length > 0) {
         toast.warning(
           `${result.attachments.toLocaleString()} files uploaded, ${result.failed.length.toLocaleString()} failed — press “Resume upload” with the same zip to retry just those.`,
         );
@@ -101,7 +114,9 @@ function Home() {
             : `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
         );
       }
-      navigate({ to: "/archive/$importId", params: { importId: result.importId } });
+      if (!result.cancelled) {
+        navigate({ to: "/archive/$importId", params: { importId: result.importId } });
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -110,10 +125,14 @@ function Home() {
       );
     } finally {
       setBusy(false);
+      setPaused(false);
+      pausedRef.current = false;
+      cancelledRef.current = false;
       setProgress(null);
       setResumeId(null);
     }
   };
+
 
 
   const percent =
