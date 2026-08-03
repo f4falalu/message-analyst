@@ -10,7 +10,11 @@ export type IngestProgress = {
 };
 
 const BUCKET = "wa-archive";
-const UPLOAD_CONCURRENCY = 4;
+const UPLOAD_CONCURRENCY = 3;
+const MAX_ATTEMPTS = 4;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
 function baseName(path: string): string {
   return path.split("/").pop() ?? path;
