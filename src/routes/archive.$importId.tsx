@@ -574,11 +574,59 @@ function ArchivePage() {
               </Button>
             </div>
           </div>
-          <Progress className="mt-5" value={readPercent} />
-          <p className="mt-2 text-xs text-muted-foreground">
-            {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
-            {Number(concurrency) * Number(chunkSize)} documents read at once.
-          </p>
+          <Progress className="mt-5" value={reading ? livePercent : readPercent} />
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
+              {Number(concurrency) * Number(chunkSize)} documents read at once.
+            </span>
+            {reading ? (
+              <span className="text-foreground">
+                {liveHandled.toLocaleString()} / {liveTotal.toLocaleString()} files ·{" "}
+                {liveFailed.toLocaleString()} failed · elapsed {formatDuration(elapsedMs)} ·{" "}
+                {etaMs > 0 ? `about ${formatDuration(etaMs)} left` : "estimating…"}
+                {perFileMs > 0 ? ` · ${(perFileMs / 1000).toFixed(1)}s per file` : ""}
+              </span>
+            ) : null}
+          </div>
+
+          {reading || liveFiles.length > 0 ? (
+            <div className="mt-4 max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-3">
+              {liveFiles.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Waiting for the first file to come back…</p>
+              ) : (
+                liveFiles.map((file, index) => (
+                  <div
+                    key={`${file.attachmentId}-${index}`}
+                    className="flex flex-wrap items-center gap-2 text-xs"
+                  >
+                    <Badge variant={file.outcome === "done" ? "default" : "outline"}>{file.outcome}</Badge>
+                    <span className="max-w-[18rem] truncate font-mono">{file.filename}</span>
+                    <span className="text-muted-foreground">{(file.durationMs / 1000).toFixed(1)}s</span>
+                    {file.attempts > 1 ? (
+                      <span className="text-muted-foreground">retried {file.attempts - 1}×</span>
+                    ) : null}
+                    {file.confidence !== null ? (
+                      <span className="text-muted-foreground">{formatConfidence(file.confidence)}</span>
+                    ) : null}
+                    {file.error ? <span className="text-destructive">{file.error}</span> : null}
+                    {file.outcome !== "done" ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        disabled={reprocessing === file.attachmentId}
+                        onClick={() => void reprocessFile(file.attachmentId)}
+                      >
+                        {reprocessing === file.attachmentId ? "Reprocessing…" : "Reprocess"}
+                      </Button>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+
         </div>
       </section>
 
