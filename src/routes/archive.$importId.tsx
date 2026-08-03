@@ -216,6 +216,43 @@ function ArchivePage() {
   const [reprocessing, setReprocessing] = useState<string | null>(null);
   const runOne = useServerFn(reprocessAttachment);
 
+  // Parse-run pause: lanes check this between chunks, and the flag survives a
+  // reload so a closed tab doesn't silently resume a run.
+  const pauseKey = `parse-paused:${importId}`;
+  const [parsePaused, setParsePaused] = useState(false);
+  const parsePausedRef = useRef(false);
+  const parseStoppedRef = useRef(false);
+  useEffect(() => {
+    const stored = typeof window !== "undefined" && window.localStorage.getItem(pauseKey) === "1";
+    parsePausedRef.current = stored;
+    setParsePaused(stored);
+  }, [pauseKey]);
+  const setPaused = useCallback(
+    (value: boolean) => {
+      parsePausedRef.current = value;
+      setParsePaused(value);
+      if (typeof window !== "undefined") {
+        if (value) window.localStorage.setItem(pauseKey, "1");
+        else window.localStorage.removeItem(pauseKey);
+      }
+    },
+    [pauseKey],
+  );
+
+  // Files tab
+  const loadFiles = useServerFn(listImportFiles);
+  const requeue = useServerFn(requeueAttachments);
+  const markSkipped = useServerFn(setAttachmentSkipped);
+  const [fileRows, setFileRows] = useState<FileRow[]>([]);
+  const [fileTotal, setFileTotal] = useState(0);
+  const [filePage, setFilePage] = useState(0);
+  const [fileStatus, setFileStatus] = useState("all");
+  const [fileSearch, setFileSearch] = useState("");
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const FILE_PAGE_SIZE = 50;
+
+
   useEffect(() => {
     if (!reading) return;
     const timer = setInterval(() => setNowTick(Date.now()), 1000);
