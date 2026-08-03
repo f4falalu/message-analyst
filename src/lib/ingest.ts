@@ -53,7 +53,15 @@ export async function ingestZip(
   file: File,
   onProgress: (progress: IngestProgress) => void,
   options: { resumeImportId?: string } = {},
-): Promise<{ importId: string; messages: number; attachments: number; readable: number; skipped: number }> {
+): Promise<{
+  importId: string;
+  messages: number;
+  attachments: number;
+  readable: number;
+  skipped: number;
+  failed: string[];
+}> {
+
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
 
