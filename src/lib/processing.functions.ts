@@ -250,6 +250,18 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             })
             .eq("id", attachment.id);
 
+          files.push({
+            attachmentId: attachment.id,
+            filename: attachment.filename,
+            outcome: requeued ? "requeued" : "error",
+            confidence: null,
+            durationMs: Date.now() - startedAt,
+            attempts: 1,
+            error: message.slice(0, 300),
+          });
+
+
+
           if (data.runId) {
             events.push({
               run_id: data.runId,
