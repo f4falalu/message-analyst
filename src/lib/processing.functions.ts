@@ -130,6 +130,18 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
     };
     const events: EventRow[] = [];
 
+    type FileResult = {
+      attachmentId: string;
+      filename: string;
+      outcome: string;
+      confidence: number | null;
+      durationMs: number;
+      attempts: number;
+      error: string | null;
+    };
+    const files: FileResult[] = [];
+
+
     await Promise.all(
       pending.map(async (attachment) => {
         const startedAt = Date.now();
