@@ -290,8 +290,105 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
 
-    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted };
+    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted, files };
   });
+
+export const reprocessAttachment = createServerFn({ method: "POST" })
+  .inputValidator((input: { attachmentId: string; runId?: string | null }) => ({
+    attachmentId: String(input.attachmentId),
+    runId: input.runId ? String(input.runId) : null,
+  }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+    const apiKey = process.env["LOVABLE_API_KEY"];
+    if (!apiKey) throw new Error("AI is not configured for this project.");
+
+    const { data: attachment, error } = await supabase
+      .from("attachments")
+      .select("id, import_id, filename, storage_path, mime_type, message_seq")
+      .eq("id", data.attachmentId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!attachment) throw new Error("That file is no longer in the archive.");
+
+    const startedAt = Date.now();
+    try {
+      const { data: signed, error: signError } = await supabase.storage
+        .from("wa-archive")
+        .createSignedUrl(attachment.storage_path, 900);
+      if (signError || !signed?.signedUrl) throw new Error(signError?.message ?? "Could not sign file URL");
+
+      let chatContext = "";
+      if (attachment.message_seq !== null) {
+        const { data: nearby } = await supabase
+          .from("messages")
+          .select("sent_at, sender, body")
+          .eq("import_id", attachment.import_id)
+          .gte("seq", attachment.message_seq - 3)
+          .lte("seq", attachment.message_seq + 3)
+          .order("seq", { ascending: true });
+        chatContext = (nearby ?? [])
+          .map((m) => `${m.sent_at ?? ""} ${m.sender ?? ""}: ${(m.body ?? "").slice(0, 400)}`)
+          .join("\n")
+          .slice(0, 3000);
+      }
+
+      const extracted = await readDocument({
+        apiKey,
+        mimeType: attachment.mime_type ?? "application/octet-stream",
+        filename: attachment.filename,
+        signedUrl: signed.signedUrl,
+        chatContext,
+      });
+
+      await supabase
+        .from("attachments")
+        .update({
+          ocr_status: "done",
+          ocr_error: null,
+          raw_text: extracted.raw_text,
+          extracted: extracted as unknown as Json,
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", attachment.id);
+
+      if (data.runId) {
+        await supabase.from("processing_events").insert({
+          run_id: data.runId,
+          import_id: attachment.import_id,
+          attachment_id: attachment.id,
+          filename: attachment.filename,
+          outcome: "done",
+          doc_type: extracted.doc_type,
+          confidence: extracted.confidence,
+          field_confidence: extracted.field_confidence as unknown as Json,
+          duration_ms: Date.now() - startedAt,
+          error: "Manual reprocess",
+        });
+      }
+
+      return { ok: true, filename: attachment.filename, confidence: extracted.confidence, error: null as string | null };
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      await supabase
+        .from("attachments")
+        .update({ ocr_status: "error", ocr_error: message.slice(0, 800), processed_at: new Date().toISOString() })
+        .eq("id", attachment.id);
+      if (data.runId) {
+        await supabase.from("processing_events").insert({
+          run_id: data.runId,
+          import_id: attachment.import_id,
+          attachment_id: attachment.id,
+          filename: attachment.filename,
+          outcome: "error",
+          duration_ms: Date.now() - startedAt,
+          error: message.slice(0, 800),
+        });
+      }
+      return { ok: false, filename: attachment.filename, confidence: null, error: message.slice(0, 300) };
+    }
+  });
+
 
 export const retryFailedAttachments = createServerFn({ method: "POST" })
   .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
