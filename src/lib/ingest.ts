@@ -3,10 +3,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { guessMimeType, isReadable, parseChat } from "./wa-chat";
 
 export type IngestProgress = {
-  phase: "reading" | "parsing" | "uploading" | "indexing" | "done";
+  phase: "reading" | "parsing" | "uploading" | "indexing" | "paused" | "done";
   message: string;
   current: number;
   total: number;
+};
+
+/** Lets the UI pause or stop an upload that is already running. */
+export type IngestControl = {
+  isPaused: () => boolean;
+  isCancelled: () => boolean;
 };
 
 const BUCKET = "wa-archive";
@@ -14,6 +20,7 @@ const UPLOAD_CONCURRENCY = 3;
 const MAX_ATTEMPTS = 4;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
 
 function baseName(path: string): string {
