@@ -448,7 +448,22 @@ function ArchivePage() {
       const lane = async () => {
         for (;;) {
           if (stopped) return;
+          if (parseStoppedRef.current) {
+            stopped = true;
+            stopReason = "Stopped by hand";
+            return;
+          }
+          // Pausing idles the lane between chunks — files already read stay read.
+          while (parsePausedRef.current && !parseStoppedRef.current) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          if (parseStoppedRef.current) {
+            stopped = true;
+            stopReason = "Stopped by hand";
+            return;
+          }
           const result = await runBatch({ data: { importId, limit: chunk, runId } });
+
           if (result.files.length) {
             setLiveFiles((current) => [...result.files, ...current].slice(0, 40));
           }
