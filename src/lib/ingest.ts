@@ -176,9 +176,7 @@ export async function ingestZip(
     }
 
     // Stream each media entry straight from the zip to storage.
-    let uploaded = 0;
-    let readable = 0;
-    const rows: {
+    type Row = {
       import_id: string;
       filename: string;
       storage_path: string;
@@ -186,61 +184,114 @@ export async function ingestZip(
       size_bytes: number;
       message_seq: number | null;
       ocr_status: string;
-    }[] = [];
+    };
+
+    let uploaded = 0;
+    let readable = 0;
+    let saved = 0;
+    const failed: string[] = [];
+    let pending: Row[] = [];
+    let flushing: Promise<void> = Promise.resolve();
+
+    const saveRows = async (batch: Row[]) => {
+      if (batch.length === 0) return;
+      for (let attempt = 1; ; attempt += 1) {
+        const { error } = await supabase
+          .from("attachments")
+          .upsert(batch, { onConflict: "import_id,filename", ignoreDuplicates: true });
+        if (!error) break;
+        if (attempt >= MAX_ATTEMPTS) throw new Error(error.message);
+        await sleep(500 * attempt);
+      }
+      saved += batch.length;
+    };
+
+    // Rows are written in small batches as files land, so an interrupted run
+    // keeps everything already uploaded and resumes from there.
+    const flush = (force: boolean) => {
+      if (pending.length === 0 || (!force && pending.length < 25)) return;
+      const batch = pending;
+      pending = [];
+      flushing = flushing.then(() => saveRows(batch));
+    };
+
+    const report = () => {
+      const done = uploaded + skipped + failed.length;
+      onProgress({
+        phase: "uploading",
+        message:
+          `Uploading attachments… ${done.toLocaleString()} of ${mediaEntries.length.toLocaleString()}` +
+          (failed.length ? ` · ${failed.length.toLocaleString()} failed, will retry on resume` : ""),
+        current: done,
+        total: mediaEntries.length,
+      });
+    };
 
     await runPool(todo, UPLOAD_CONCURRENCY, async (entry) => {
       const getData = (entry as unknown as { getData?: (writer: BlobWriter) => Promise<Blob> }).getData;
       if (!getData) return;
       const filename = baseName(entry.filename);
       const mime = guessMimeType(filename);
-      const blob = await getData.call(entry, new BlobWriter(mime));
-
       const storagePath = `${importId}/${filename}`;
 
-      const { error } = await supabase.storage.from(BUCKET).upload(storagePath, blob, {
-        contentType: mime,
-        upsert: true,
-      });
-      if (error && !/already exists/i.test(error.message)) throw new Error(error.message);
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const blob = await getData.call(entry, new BlobWriter(mime));
+          const { error } = await supabase.storage.from(BUCKET).upload(storagePath, blob, {
+            contentType: mime,
+            upsert: true,
+          });
+          if (error && !/already exists/i.test(error.message)) throw new Error(error.message);
 
-      const canRead = isReadable(mime);
-      if (canRead) readable += 1;
-      rows.push({
-        import_id: importId,
-          filename,
-        storage_path: storagePath,
-        mime_type: mime,
-        size_bytes: blob.size,
-        message_seq: seqByFilename.get(filename.toLowerCase()) ?? null,
-        ocr_status: canRead ? "pending" : "skipped",
-      });
-
-      uploaded += 1;
-      if (uploaded % 5 === 0 || uploaded === todo.length) {
-        onProgress({
-          phase: "uploading",
-          message: `Uploading attachments… ${(uploaded + skipped).toLocaleString()} of ${mediaEntries.length.toLocaleString()}`,
-          current: uploaded + skipped,
-          total: mediaEntries.length,
-        });
+          const canRead = isReadable(mime);
+          if (canRead) readable += 1;
+          pending.push({
+            import_id: importId,
+            filename,
+            storage_path: storagePath,
+            mime_type: mime,
+            size_bytes: blob.size,
+            message_seq: seqByFilename.get(filename.toLowerCase()) ?? null,
+            ocr_status: canRead ? "pending" : "skipped",
+          });
+          uploaded += 1;
+          flush(false);
+          break;
+        } catch (uploadError) {
+          if (attempt === MAX_ATTEMPTS) {
+            // One bad file must not sink the whole import — note it and move on.
+            failed.push(filename);
+            break;
+          }
+          await sleep(600 * 2 ** (attempt - 1));
+        }
       }
+
+      if ((uploaded + failed.length) % 5 === 0) report();
     });
 
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase
-        .from("attachments")
-        .upsert(rows.slice(i, i + 500), { onConflict: "import_id,filename", ignoreDuplicates: true });
-      if (error) throw new Error(error.message);
-    }
+    flush(true);
+    await flushing;
+    report();
 
     await supabase
       .from("imports")
-      .update({ status: "processing", total_files: mediaEntries.length })
+      .update({
+        status: failed.length ? "uploading" : "processing",
+        total_files: mediaEntries.length,
+        notes: failed.length ? `${failed.length} file(s) failed to upload — resume to retry.` : null,
+      })
       .eq("id", importId);
 
-    onProgress({ phase: "done", message: "Upload complete.", current: 1, total: 1 });
+    onProgress({
+      phase: "done",
+      message: failed.length ? `Upload finished with ${failed.length} failed file(s).` : "Upload complete.",
+      current: 1,
+      total: 1,
+    });
 
-    return { importId, messages: parsed.messages.length, attachments: rows.length, readable, skipped };
+    return { importId, messages: parsed.messages.length, attachments: saved, readable, skipped, failed };
+
   } catch (error) {
     await supabase
       .from("imports")
