@@ -948,6 +948,51 @@ function ArchivePage() {
                 {reprocessing === preview.id ? "Reprocessing…" : "Reprocess this file"}
               </Button>
 
+              <div>
+                <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Chat vs file checks
+                </h3>
+                {preview.mismatches.length === 0 ? (
+                  <p className="mt-2 rounded-lg border border-border/60 bg-card/40 p-3 text-sm text-muted-foreground">
+                    The facility, requester and dates on this file agree with the surrounding chat.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {preview.mismatches.map((issue, index) => (
+                      <li
+                        key={index}
+                        className={`rounded-lg border p-3 text-sm ${
+                          issue.level === "error"
+                            ? "border-destructive/50 bg-destructive/10 text-destructive"
+                            : "border-primary/40 bg-primary/5 text-foreground"
+                        }`}
+                      >
+                        <span className="mr-2 text-xs uppercase tracking-widest opacity-70">
+                          {issue.level === "error" ? "Mismatch" : "Check"}
+                        </span>
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {preview.chatContext.length > 0 ? (
+                <div>
+                  <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    Chat around this file
+                  </h3>
+                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-3">
+                    {preview.chatContext.map((message) => (
+                      <p key={message.seq} className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{message.sender ?? "Unknown"}</span>
+                        {message.sent_at ? ` · ${new Date(message.sent_at).toLocaleString()}` : ""}
+                        {message.body ? ` — ${message.body}` : ""}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
 
               <div>
