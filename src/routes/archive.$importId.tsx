@@ -829,7 +829,7 @@ function ArchivePage() {
                 <TableBody>
                   {visibleEvents.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
                         No log entries yet — run the reader to record one.
                       </TableCell>
                     </TableRow>
