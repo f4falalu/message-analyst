@@ -317,13 +317,56 @@ function Home() {
                     </div>
                   ) : null}
 
+                  {busy && activeImportId === row.id ? (
+                    <p className="text-xs text-muted-foreground">
+                      {paused ? "Paused" : progress?.message ?? "Uploading…"}
+                    </p>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline" size="sm">
                       <Link to="/archive/$importId" params={{ importId: row.id }}>
                         Open archive
                       </Link>
                     </Button>
-                    {row.status !== "ready" ? (
+                    {busy && activeImportId === row.id ? (
+                      <>
+                        {paused ? (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              pausedRef.current = false;
+                              setPaused(false);
+                            }}
+                          >
+                            Resume
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              pausedRef.current = true;
+                              setPaused(true);
+                            }}
+                          >
+                            Pause
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            cancelledRef.current = true;
+                            pausedRef.current = false;
+                            setPaused(false);
+                            toast.info("Stopping after the files in flight finish…");
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    ) : row.status !== "ready" ? (
                       <Button
                         variant="ghost"
                         size="sm"
