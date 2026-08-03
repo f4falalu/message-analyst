@@ -822,6 +822,8 @@ function ArchivePage() {
                     <TableHead>Confidence</TableHead>
                     <TableHead>Field confidence</TableHead>
                     <TableHead>Time</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>
