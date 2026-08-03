@@ -266,8 +266,23 @@ function Home() {
                   >
                     Select zip file
                   </Button>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <Button size="sm" variant="outline" disabled>
+                      Resume
+                    </Button>
+                    <Button size="sm" variant="outline" disabled>
+                      Pause
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled>
+                      Cancel
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Resume, Pause and Cancel become active once an upload is running.
+                  </p>
                 </div>
               )}
+
             </div>
 
         </div>
