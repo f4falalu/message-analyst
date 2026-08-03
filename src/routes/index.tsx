@@ -52,6 +52,7 @@ function Home() {
   const [progress, setProgress] = useState<IngestProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [imports, setImports] = useState<ImportRow[]>([]);
+  const [uploadedCounts, setUploadedCounts] = useState<Record<string, number>>({});
   const [resumeId, setResumeId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,9 +60,24 @@ function Home() {
       .from("imports")
       .select("id, filename, status, message_count, total_files, created_at")
       .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (error) toast.error(error.message);
-        else setImports(data ?? []);
+      .then(async ({ data, error }) => {
+        if (error) {
+          toast.error(error.message);
+          return;
+        }
+        const rows = data ?? [];
+        setImports(rows);
+        const counts: Record<string, number> = {};
+        await Promise.all(
+          rows.map(async (row) => {
+            const { count } = await supabase
+              .from("attachments")
+              .select("id", { count: "exact", head: true })
+              .eq("import_id", row.id);
+            counts[row.id] = count ?? 0;
+          }),
+        );
+        setUploadedCounts(counts);
       });
   }, [busy]);
 
@@ -71,22 +87,34 @@ function Home() {
       return;
     }
     setBusy(true);
+    const importId = resumeId;
     try {
-      const result = await ingestZip(file, setProgress, resumeId ? { resumeImportId: resumeId } : {});
-      toast.success(
-        result.skipped > 0
-          ? `Resumed — ${result.skipped.toLocaleString()} files were already uploaded, ${result.attachments.toLocaleString()} added.`
-          : `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
-      );
+      const result = await ingestZip(file, setProgress, importId ? { resumeImportId: importId } : {});
+      if (result.failed.length > 0) {
+        toast.warning(
+          `${result.attachments.toLocaleString()} files uploaded, ${result.failed.length.toLocaleString()} failed — press “Resume upload” with the same zip to retry just those.`,
+        );
+      } else {
+        toast.success(
+          result.skipped > 0
+            ? `Resumed — ${result.skipped.toLocaleString()} files were already uploaded, ${result.attachments.toLocaleString()} added.`
+            : `Imported ${result.messages.toLocaleString()} messages and ${result.attachments.toLocaleString()} files.`,
+        );
+      }
       navigate({ to: "/archive/$importId", params: { importId: result.importId } });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Import failed.");
+      toast.error(
+        error instanceof Error
+          ? `${error.message} — everything uploaded so far is saved; resume with the same zip to continue.`
+          : "Import failed.",
+      );
     } finally {
       setBusy(false);
       setProgress(null);
       setResumeId(null);
     }
   };
+
 
   const percent =
     progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : null;
