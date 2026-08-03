@@ -940,6 +940,16 @@ function ArchivePage() {
                 </p>
               ) : null}
 
+              <Button
+                variant="outline"
+                disabled={reprocessing === preview.id}
+                onClick={() => void reprocessFile(preview.id)}
+              >
+                {reprocessing === preview.id ? "Reprocessing…" : "Reprocess this file"}
+              </Button>
+
+
+
               <div>
                 <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Text read from the file</h3>
                 <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-card/40 p-3 text-xs text-foreground">
