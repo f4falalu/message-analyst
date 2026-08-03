@@ -695,13 +695,30 @@ function ArchivePage() {
                 </Select>
               </div>
               <Button onClick={readAll} disabled={reading || counts.pending === 0}>
-                {reading ? "Reading…" : "Read pending documents"}
+                {reading ? (parsePaused ? "Paused" : "Reading…") : "Read pending documents"}
               </Button>
+              {reading ? (
+                <>
+                  <Button variant="outline" onClick={() => setPaused(!parsePaused)}>
+                    {parsePaused ? "Resume reading" : "Pause reading"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      parseStoppedRef.current = true;
+                      setPaused(false);
+                    }}
+                  >
+                    Stop
+                  </Button>
+                </>
+              ) : null}
               {counts.error > 0 ? (
                 <Button variant="outline" onClick={retry} disabled={reading}>
                   Retry failed
                 </Button>
               ) : null}
+
               <Button variant="secondary" onClick={build} disabled={building || counts.done === 0}>
                 {building ? "Building…" : "Build ledger"}
               </Button>
