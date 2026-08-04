@@ -1,0 +1,2 @@
+REVOKE EXECUTE ON FUNCTION public.claim_attachments(uuid, integer, bigint, bigint) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_attachments(uuid, integer, bigint, bigint) TO service_role;
