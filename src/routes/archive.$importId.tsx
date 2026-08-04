@@ -281,8 +281,8 @@ function ArchivePage() {
   const [searching, setSearching] = useState(false);
 
   const loadCounts = useCallback(async () => {
-    const statuses: (keyof Counts)[] = ["pending", "done", "error", "skipped"];
-    const next: Counts = { pending: 0, done: 0, error: 0, skipped: 0 };
+    const statuses: (keyof Counts)[] = ["pending", "done", "error", "skipped", "deferred"];
+    const next: Counts = { pending: 0, done: 0, error: 0, skipped: 0, deferred: 0 };
     await Promise.all(
       statuses.map(async (status) => {
         const { count } = await supabase
