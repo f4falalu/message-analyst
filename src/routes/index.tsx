@@ -466,9 +466,27 @@ function Home() {
                     {progress?.bytesTotal ? (
                       <span className="tabular-nums">
                         {formatBytes(progress.bytesDone ?? 0)} of {formatBytes(progress.bytesTotal)} uploaded
+                        {bytePercent !== null ? ` (${bytePercent}%)` : ""}
                       </span>
                     ) : null}
                   </div>
+                  {progress?.bytesTotal ? (
+                    <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/60 bg-card/60 p-3 text-xs">
+                      <div>
+                        <p className="uppercase tracking-[0.2em] text-muted-foreground">Speed</p>
+                        <p className="mt-1 font-serif text-lg tabular-nums text-foreground">
+                          {paused ? "Paused" : formatSpeed(rate?.bytesPerSecond ?? 0)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="uppercase tracking-[0.2em] text-muted-foreground">Time remaining</p>
+                        <p className="mt-1 font-serif text-lg tabular-nums text-foreground">
+                          {paused ? "—" : formatDuration(rate?.etaSeconds ?? 0)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
                     {paused ? (
                       <Button
