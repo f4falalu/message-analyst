@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { readDocument } from "./doc-reader.server";
+import { DeferError, readDocument } from "./doc-reader.server";
 import { buildRecords, chatFactsFor, type BuilderAttachment, type BuilderMessage } from "./record-builder";
 import { crossCheckSources, type Issue, type Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
