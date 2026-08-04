@@ -181,7 +181,6 @@ export async function readDocument(params: {
       file: { filename: params.filename, file_data: `data:application/pdf;base64,${base64}` },
     };
   } else {
-  } else {
     mediaBlock = { type: "image_url", image_url: { url: params.signedUrl } };
   }
 
