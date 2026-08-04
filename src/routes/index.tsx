@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Play, Pause, X, AlertTriangle, RotateCcw } from "lucide-react";
+import { Play, Pause, X, AlertTriangle, RotateCcw, ChevronDown, ListChecks } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { ingestZip, type IngestProgress, type IngestFailure } from "@/lib/ingest";
 import { requeueAttachments } from "@/lib/processing.functions";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sheet,
   SheetContent,
@@ -28,7 +29,25 @@ type ImportRow = {
   notes: string | null;
 };
 
+/** One line in the per-import processing log. */
+type LogEntry = { at: number; label: string };
+
+/** Snapshot of an upload, kept so a page refresh can show where it stopped. */
+type UploadSnapshot = {
+  importId: string | null;
+  zipName: string;
+  phase: string;
+  message: string;
+  current: number;
+  total: number;
+  bytesDone: number;
+  bytesTotal: number;
+  updatedAt: number;
+};
+
 const FAILURE_KEY = (importId: string) => `upload-failures:${importId}`;
+const LOG_KEY = (importId: string) => `upload-log:${importId}`;
+const SNAPSHOT_KEY = "upload-snapshot";
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
@@ -36,6 +55,33 @@ function formatBytes(bytes: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
+
+function formatSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "—";
+  const mbps = bytesPerSecond / 1_048_576;
+  if (mbps < 1) return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+  return `${mbps.toFixed(mbps < 10 ? 2 : 1)} MB/s`;
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  reading: "Extract — opening the zip",
+  parsing: "Parse chat.txt — reading the conversation",
+  indexing: "Match attachments — saving messages and contacts",
+  uploading: "Upload attachments",
+  paused: "Paused",
+  done: "Export ready — upload finished",
+};
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -79,9 +125,30 @@ function Home() {
   const [failures, setFailures] = useState<Record<string, IngestFailure[]>>({});
   const [errorsFor, setErrorsFor] = useState<string | null>(null);
   const [requeuing, setRequeuing] = useState(false);
+  const [logs, setLogs] = useState<Record<string, LogEntry[]>>({});
+  const [openLog, setOpenLog] = useState<string | null>(null);
+  const [rate, setRate] = useState<{ bytesPerSecond: number; etaSeconds: number } | null>(null);
+  const [snapshot, setSnapshot] = useState<UploadSnapshot | null>(null);
   const requeue = useServerFn(requeueAttachments);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
+  const samplesRef = useRef<{ at: number; bytes: number }[]>([]);
+  const lastPhaseRef = useRef<string | null>(null);
+
+  // Restore the last upload snapshot so a refresh mid-upload still shows where
+  // the run stopped and which import to retry.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as UploadSnapshot;
+      if (parsed && parsed.phase !== "done") setSnapshot(parsed);
+    } catch {
+      window.localStorage.removeItem(SNAPSHOT_KEY);
+    }
+  }, []);
+
 
   useEffect(() => {
     supabase
@@ -119,6 +186,19 @@ function Home() {
             }
           }
           setFailures(stored);
+
+          const storedLogs: Record<string, LogEntry[]> = {};
+          for (const row of rows) {
+            const raw = window.localStorage.getItem(LOG_KEY(row.id));
+            if (!raw) continue;
+            try {
+              const parsed: unknown = JSON.parse(raw);
+              if (Array.isArray(parsed)) storedLogs[row.id] = parsed as LogEntry[];
+            } catch {
+              window.localStorage.removeItem(LOG_KEY(row.id));
+            }
+          }
+          setLogs((current) => ({ ...storedLogs, ...current }));
         }
       });
   }, [busy]);
@@ -129,6 +209,38 @@ function Home() {
     if (list.length === 0) window.localStorage.removeItem(FAILURE_KEY(importId));
     else window.localStorage.setItem(FAILURE_KEY(importId), JSON.stringify(list.slice(0, 200)));
   };
+
+  // Every stage change is written to a small per-import log so the card can
+  // show what happened and when, even after a refresh.
+  const appendLog = (importId: string | null, label: string) => {
+    const key = importId ?? "pending";
+    const entry: LogEntry = { at: Date.now(), label };
+    setLogs((current) => {
+      const next = [...(current[key] ?? []), entry].slice(-100);
+      if (typeof window !== "undefined") window.localStorage.setItem(LOG_KEY(key), JSON.stringify(next));
+      return { ...current, [key]: next };
+    });
+  };
+
+  const adoptPendingLog = (importId: string) => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(LOG_KEY("pending"));
+    if (!raw) return;
+    window.localStorage.removeItem(LOG_KEY("pending"));
+    try {
+      const pending = JSON.parse(raw) as LogEntry[];
+      setLogs((current) => {
+        const merged = [...pending, ...(current[importId] ?? [])].slice(-100);
+        window.localStorage.setItem(LOG_KEY(importId), JSON.stringify(merged));
+        const { pending: _drop, ...rest } = current;
+        void _drop;
+        return { ...rest, [importId]: merged };
+      });
+    } catch {
+      /* ignore a corrupt log */
+    }
+  };
+
 
   const retryFailedUploads = (importId: string) => {
     setErrorsFor(null);
@@ -178,20 +290,82 @@ function Home() {
     setPaused(false);
     pausedRef.current = false;
     cancelledRef.current = false;
+    samplesRef.current = [];
+    lastPhaseRef.current = null;
+    setRate(null);
+    setSnapshot(null);
     const importId = resumeId ?? (await rememberedImportId(file));
     setActiveImportId(importId);
     if (!resumeId && importId) {
       toast.info("Picking up where this zip left off — already uploaded files are kept.");
     }
+    appendLog(importId, importId ? "Resumed this import from the same zip" : "Started a new import");
+
+    // Speed is a rolling average over the last ~20s of samples, which keeps the
+    // estimate steady when individual files vary a lot in size.
+    const handleProgress = (value: IngestProgress) => {
+      setProgress(value);
+
+      if (value.phase !== lastPhaseRef.current) {
+        lastPhaseRef.current = value.phase;
+        appendLog(importId, PHASE_LABEL[value.phase] ?? value.phase);
+      }
+
+      const bytesDone = value.bytesDone ?? 0;
+      const bytesTotal = value.bytesTotal ?? 0;
+      if (bytesTotal > 0 && value.phase === "uploading") {
+        const now = Date.now();
+        const samples = samplesRef.current;
+        samples.push({ at: now, bytes: bytesDone });
+        while (samples.length > 2 && now - samples[0]!.at > 20_000) samples.shift();
+        const first = samples[0]!;
+        const elapsed = (now - first.at) / 1000;
+        const moved = bytesDone - first.bytes;
+        if (elapsed >= 1 && moved > 0) {
+          const bytesPerSecond = moved / elapsed;
+          setRate({
+            bytesPerSecond,
+            etaSeconds: Math.max(0, (bytesTotal - bytesDone) / bytesPerSecond),
+          });
+        }
+      }
+
+      if (typeof window !== "undefined") {
+        const snap: UploadSnapshot = {
+          importId,
+          zipName: file.name,
+          phase: value.phase,
+          message: value.message,
+          current: value.current,
+          total: value.total,
+          bytesDone,
+          bytesTotal,
+          updatedAt: Date.now(),
+        };
+        window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
+      }
+    };
+
     try {
-      const result = await ingestZip(file, setProgress, {
+      const result = await ingestZip(file, handleProgress, {
         ...(importId ? { resumeImportId: importId } : {}),
         control: { isPaused: () => pausedRef.current, isCancelled: () => cancelledRef.current },
       });
       if (typeof window !== "undefined") {
         window.localStorage.setItem(zipKey(file), result.importId);
+        window.localStorage.removeItem(SNAPSHOT_KEY);
       }
+      if (!importId) adoptPendingLog(result.importId);
       rememberFailures(result.importId, result.failed);
+      appendLog(
+        result.importId,
+        result.cancelled
+          ? "Upload cancelled by you"
+          : result.failed.length > 0
+            ? `Finished with ${result.failed.length} failed file(s)`
+            : `Upload complete — ${result.attachments.toLocaleString()} file(s) stored`,
+      );
+
 
       if (result.cancelled) {
         toast.info(
@@ -212,6 +386,7 @@ function Home() {
         navigate({ to: "/archive/$importId", params: { importId: result.importId } });
       }
     } catch (error) {
+      appendLog(importId, error instanceof Error ? `Failed — ${error.message}` : "Import failed");
       toast.error(
         error instanceof Error
           ? `${error.message} — everything uploaded so far is saved; resume with the same zip to continue.`
@@ -223,15 +398,19 @@ function Home() {
       pausedRef.current = false;
       cancelledRef.current = false;
       setProgress(null);
+      setRate(null);
       setResumeId(null);
       setActiveImportId(null);
     }
   };
 
-
-
   const percent =
     progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : null;
+  const bytePercent =
+    progress?.bytesTotal && progress.bytesTotal > 0
+      ? Math.round(((progress.bytesDone ?? 0) / progress.bytesTotal) * 100)
+      : null;
+
 
   return (
     <main className="min-h-screen bg-background">
@@ -287,9 +466,27 @@ function Home() {
                     {progress?.bytesTotal ? (
                       <span className="tabular-nums">
                         {formatBytes(progress.bytesDone ?? 0)} of {formatBytes(progress.bytesTotal)} uploaded
+                        {bytePercent !== null ? ` (${bytePercent}%)` : ""}
                       </span>
                     ) : null}
                   </div>
+                  {progress?.bytesTotal ? (
+                    <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/60 bg-card/60 p-3 text-xs">
+                      <div>
+                        <p className="uppercase tracking-[0.2em] text-muted-foreground">Speed</p>
+                        <p className="mt-1 font-serif text-lg tabular-nums text-foreground">
+                          {paused ? "Paused" : formatSpeed(rate?.bytesPerSecond ?? 0)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="uppercase tracking-[0.2em] text-muted-foreground">Time remaining</p>
+                        <p className="mt-1 font-serif text-lg tabular-nums text-foreground">
+                          {paused ? "—" : formatDuration(rate?.etaSeconds ?? 0)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
                     {paused ? (
                       <Button
@@ -336,11 +533,64 @@ function Home() {
 
               ) : (
                 <div className="space-y-4">
+                  {snapshot ? (
+                    <div className="space-y-3 rounded-lg border border-border/60 bg-card/60 p-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        Upload interrupted
+                      </p>
+                      <p className="text-sm text-foreground">
+                        {snapshot.zipName} stopped at{" "}
+                        {snapshot.total > 0
+                          ? `${snapshot.current.toLocaleString()} of ${snapshot.total.toLocaleString()} files`
+                          : snapshot.message}
+                        {snapshot.bytesTotal > 0
+                          ? ` · ${formatBytes(snapshot.bytesDone)} of ${formatBytes(snapshot.bytesTotal)}`
+                          : ""}{" "}
+                        on {new Date(snapshot.updatedAt).toLocaleString()}.
+                      </p>
+                      {snapshot.total > 0 ? (
+                        <Progress value={Math.round((snapshot.current / snapshot.total) * 100)} />
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setResumeId(snapshot.importId);
+                            inputRef.current?.click();
+                          }}
+                        >
+                          <Play className="size-4" />
+                          Continue this upload
+                        </Button>
+                        {snapshot.importId ? (
+                          <Button size="sm" variant="outline" onClick={() => setErrorsFor(snapshot.importId)}>
+                            <AlertTriangle className="size-4" />
+                            Retry failed items
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setSnapshot(null);
+                            if (typeof window !== "undefined") window.localStorage.removeItem(SNAPSHOT_KEY);
+                          }}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Your browser can&apos;t hold a multi-gigabyte file across a refresh, so pick the same zip
+                        again — only the files still missing are sent.
+                      </p>
+                    </div>
+                  ) : null}
                   <p className="font-serif text-xl text-foreground">Choose your WhatsApp export</p>
                   <p className="text-sm text-muted-foreground">
                     The whole zip, straight from WhatsApp&apos;s &ldquo;Export chat &rarr; Attach media&rdquo;.
                     Nothing is loaded into memory all at once, so multi-gigabyte exports are fine.
                   </p>
+
                   <Button
                     size="lg"
                     onClick={() => {
@@ -417,10 +667,52 @@ function Home() {
                   ) : null}
 
                   {busy && activeImportId === row.id ? (
-                    <p className="text-xs text-muted-foreground">
-                      {paused ? "Paused" : progress?.message ?? "Uploading…"}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        {paused ? "Paused" : progress?.message ?? "Uploading…"}
+                      </p>
+                      {!paused && rate ? (
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          {formatSpeed(rate.bytesPerSecond)} · {formatDuration(rate.etaSeconds)} left
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
+
+                  <Collapsible
+                    open={openLog === row.id}
+                    onOpenChange={(open) => setOpenLog(open ? row.id : null)}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
+                        <ListChecks className="size-3.5" />
+                        Processing log
+                        {(logs[row.id]?.length ?? 0) > 0 ? ` (${logs[row.id]!.length})` : ""}
+                        <ChevronDown
+                          className={`size-3.5 transition-transform ${openLog === row.id ? "rotate-180" : ""}`}
+                        />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <ol className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/50 p-2 text-xs">
+                        {(logs[row.id] ?? []).length === 0 ? (
+                          <li className="text-muted-foreground">
+                            No steps recorded yet — they appear as this import runs.
+                          </li>
+                        ) : (
+                          [...(logs[row.id] ?? [])].reverse().map((entry, index) => (
+                            <li key={`${entry.at}-${index}`} className="flex gap-2">
+                              <span className="tabular-nums text-muted-foreground">
+                                {new Date(entry.at).toLocaleTimeString()}
+                              </span>
+                              <span className="text-foreground">{entry.label}</span>
+                            </li>
+                          ))
+                        )}
+                      </ol>
+                    </CollapsibleContent>
+                  </Collapsible>
+
 
                   <div className="flex flex-wrap items-center gap-2">
                     <Button asChild variant="outline" size="sm">
