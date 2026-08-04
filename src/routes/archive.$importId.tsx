@@ -429,7 +429,6 @@ function ArchivePage() {
     setLiveDone(0);
     setLiveFailed(0);
     setLiveDeferred(0);
-    setLiveDeferred(0);
     setLiveStart(Date.now());
     const lanes = Number(concurrency);
     const chunk = Number(chunkSize);
