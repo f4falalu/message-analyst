@@ -273,12 +273,17 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("[429]")) rateLimited = true;
           if (message.includes("[402]")) creditsExhausted = true;
-          failed += 1;
           const requeued = message.includes("[429]");
+          // A deferred file is *unread*, not empty — it must never look like a
+          // document that was read and had nothing in it.
+          const isDeferred = error instanceof DeferError || (error as { deferred?: boolean })?.deferred === true;
+          if (!isDeferred) failed += 1;
+          else deferred += 1;
+          const outcome = requeued ? "requeued" : isDeferred ? "deferred" : "error";
           await supabase
             .from("attachments")
             .update({
-              ocr_status: requeued ? "pending" : "error",
+              ocr_status: requeued ? "pending" : isDeferred ? "deferred" : "error",
               ocr_error: message.slice(0, 800),
               processed_at: new Date().toISOString(),
             })
@@ -287,7 +292,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
           files.push({
             attachmentId: attachment.id,
             filename: attachment.filename,
-            outcome: requeued ? "requeued" : "error",
+            outcome,
             confidence: null,
             durationMs: Date.now() - startedAt,
             attempts: 1,
@@ -302,7 +307,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               import_id: data.importId,
               attachment_id: attachment.id,
               filename: attachment.filename,
-              outcome: requeued ? "requeued" : "error",
+              outcome,
               doc_type: null,
               confidence: null,
               field_confidence: null,
