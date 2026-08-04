@@ -3,6 +3,23 @@
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const MODEL = "google/gemini-3.6-flash";
 
+/** How large an inlined PDF may be. Heavy files are read one at a time. */
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Thrown when a document cannot be read *yet* (too large for the current
+ * ceiling). Callers must park it as "deferred" — never as read-and-empty,
+ * otherwise matching would claim the document said nothing.
+ */
+export class DeferError extends Error {
+  readonly deferred = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "DeferError";
+  }
+}
+
+
 export type FieldConfidence = {
   facility_name: number | null;
   items: number | null;
