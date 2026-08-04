@@ -445,7 +445,9 @@ function ArchivePage() {
 
       // Each lane pulls its own chunk of files; the backend hands out
       // non-overlapping batches, so lanes never read the same document.
-      const lane = async () => {
+      // Small files go through the parallel lanes; large ones get a lane of
+      // their own (one file at a time) so nothing has to be skipped.
+      const lane = async (band: { limit: number; minBytes?: number; maxBytes?: number }) => {
         for (;;) {
           if (stopped) return;
           if (parseStoppedRef.current) {
@@ -467,7 +469,15 @@ function ArchivePage() {
           let result: Awaited<ReturnType<typeof runBatch>> | null = null;
           for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
-              result = await runBatch({ data: { importId, limit: chunk, runId } });
+              result = await runBatch({
+                data: {
+                  importId,
+                  limit: band.limit,
+                  runId,
+                  minBytes: band.minBytes ?? null,
+                  maxBytes: band.maxBytes ?? null,
+                },
+              });
               break;
             } catch (batchError) {
               if (attempt === 3) throw batchError;
@@ -481,6 +491,7 @@ function ArchivePage() {
           }
           setLiveDone((current) => current + result.processed);
           setLiveFailed((current) => current + result.failed);
+          if (result.deferred) setLiveDeferred((current) => current + result.deferred);
           void loadCounts();
           if (result.creditsExhausted) {
             stopped = true;
@@ -492,11 +503,16 @@ function ArchivePage() {
             await new Promise((resolve) => setTimeout(resolve, 8000));
             continue;
           }
-          if (result.processed === 0 && result.failed === 0) return;
+          if (result.processed === 0 && result.failed === 0 && result.deferred === 0) return;
         }
       };
 
-      await Promise.all(Array.from({ length: lanes }, () => lane()));
+      await Promise.all([
+        ...Array.from({ length: lanes }, () => lane({ limit: chunk, maxBytes: HEAVY_FILE_BYTES })),
+        // Heavy lane: one big document at a time, in parallel with the rest.
+        lane({ limit: 1, minBytes: HEAVY_FILE_BYTES }),
+      ]);
+
       await endRun({ data: { runId, status: stopped ? "stopped" : "completed", notes: stopReason } });
       if (!stopped) toast.success("Reading finished.");
     } catch (error) {
