@@ -763,6 +763,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
 
     return {
       records: built.length,
+      unreadAttachments: unread.length,
       needsReview: built.filter((record) => record.needs_review).length,
       flagged: built.filter((record) => record.issues.some((issue) => issue.level === "error")).length,
     };
