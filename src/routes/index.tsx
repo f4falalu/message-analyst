@@ -290,20 +290,82 @@ function Home() {
     setPaused(false);
     pausedRef.current = false;
     cancelledRef.current = false;
+    samplesRef.current = [];
+    lastPhaseRef.current = null;
+    setRate(null);
+    setSnapshot(null);
     const importId = resumeId ?? (await rememberedImportId(file));
     setActiveImportId(importId);
     if (!resumeId && importId) {
       toast.info("Picking up where this zip left off — already uploaded files are kept.");
     }
+    appendLog(importId, importId ? "Resumed this import from the same zip" : "Started a new import");
+
+    // Speed is a rolling average over the last ~20s of samples, which keeps the
+    // estimate steady when individual files vary a lot in size.
+    const handleProgress = (value: IngestProgress) => {
+      setProgress(value);
+
+      if (value.phase !== lastPhaseRef.current) {
+        lastPhaseRef.current = value.phase;
+        appendLog(importId, PHASE_LABEL[value.phase] ?? value.phase);
+      }
+
+      const bytesDone = value.bytesDone ?? 0;
+      const bytesTotal = value.bytesTotal ?? 0;
+      if (bytesTotal > 0 && value.phase === "uploading") {
+        const now = Date.now();
+        const samples = samplesRef.current;
+        samples.push({ at: now, bytes: bytesDone });
+        while (samples.length > 2 && now - samples[0]!.at > 20_000) samples.shift();
+        const first = samples[0]!;
+        const elapsed = (now - first.at) / 1000;
+        const moved = bytesDone - first.bytes;
+        if (elapsed >= 1 && moved > 0) {
+          const bytesPerSecond = moved / elapsed;
+          setRate({
+            bytesPerSecond,
+            etaSeconds: Math.max(0, (bytesTotal - bytesDone) / bytesPerSecond),
+          });
+        }
+      }
+
+      if (typeof window !== "undefined") {
+        const snap: UploadSnapshot = {
+          importId,
+          zipName: file.name,
+          phase: value.phase,
+          message: value.message,
+          current: value.current,
+          total: value.total,
+          bytesDone,
+          bytesTotal,
+          updatedAt: Date.now(),
+        };
+        window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
+      }
+    };
+
     try {
-      const result = await ingestZip(file, setProgress, {
+      const result = await ingestZip(file, handleProgress, {
         ...(importId ? { resumeImportId: importId } : {}),
         control: { isPaused: () => pausedRef.current, isCancelled: () => cancelledRef.current },
       });
       if (typeof window !== "undefined") {
         window.localStorage.setItem(zipKey(file), result.importId);
+        window.localStorage.removeItem(SNAPSHOT_KEY);
       }
+      if (!importId) adoptPendingLog(result.importId);
       rememberFailures(result.importId, result.failed);
+      appendLog(
+        result.importId,
+        result.cancelled
+          ? "Upload cancelled by you"
+          : result.failed.length > 0
+            ? `Finished with ${result.failed.length} failed file(s)`
+            : `Upload complete — ${result.attachments.toLocaleString()} file(s) stored`,
+      );
+
 
       if (result.cancelled) {
         toast.info(
