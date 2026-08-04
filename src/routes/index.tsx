@@ -339,62 +339,71 @@ function Home() {
                     </p>
                   ) : null}
 
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button asChild variant="outline" size="sm">
                       <Link to="/archive/$importId" params={{ importId: row.id }}>
                         Open archive
                       </Link>
                     </Button>
-                    {busy && activeImportId === row.id ? (
-                      <>
-                        {paused ? (
+                    {(() => {
+                      const isActive = busy && activeImportId === row.id;
+                      const canResume = (!isActive && row.status !== "ready") || (isActive && paused);
+                      const canPause = isActive && !paused;
+                      const canCancel = isActive;
+                      return (
+                        <div className="flex items-center gap-1">
                           <Button
-                            size="sm"
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            title="Resume"
+                            aria-label="Resume"
+                            disabled={!canResume}
                             onClick={() => {
-                              pausedRef.current = false;
-                              setPaused(false);
+                              if (isActive && paused) {
+                                pausedRef.current = false;
+                                setPaused(false);
+                              } else {
+                                setResumeId(row.id);
+                                inputRef.current?.click();
+                              }
                             }}
                           >
-                            Resume
+                            <Play className="size-4" />
                           </Button>
-                        ) : (
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="outline"
+                            className="h-8 w-8"
+                            title="Pause"
+                            aria-label="Pause"
+                            disabled={!canPause}
                             onClick={() => {
                               pausedRef.current = true;
                               setPaused(true);
                             }}
                           >
-                            Pause
+                            <Pause className="size-4" />
                           </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            cancelledRef.current = true;
-                            pausedRef.current = false;
-                            setPaused(false);
-                            toast.info("Stopping after the files in flight finish…");
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      </>
-                    ) : row.status !== "ready" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => {
-                          setResumeId(row.id);
-                          inputRef.current?.click();
-                        }}
-                      >
-                        Resume upload
-                      </Button>
-                    ) : null}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            title="Cancel"
+                            aria-label="Cancel"
+                            disabled={!canCancel}
+                            onClick={() => {
+                              cancelledRef.current = true;
+                              pausedRef.current = false;
+                              setPaused(false);
+                              toast.info("Stopping after the files in flight finish…");
+                            }}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </CardContent>
               </Card>
