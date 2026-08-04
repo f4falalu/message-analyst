@@ -411,9 +411,14 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
       return { ok: true, filename: attachment.filename, confidence: extracted.confidence, error: null as string | null };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
+      const isDeferred = caught instanceof DeferError || (caught as { deferred?: boolean })?.deferred === true;
       await supabase
         .from("attachments")
-        .update({ ocr_status: "error", ocr_error: message.slice(0, 800), processed_at: new Date().toISOString() })
+        .update({
+          ocr_status: isDeferred ? "deferred" : "error",
+          ocr_error: message.slice(0, 800),
+          processed_at: new Date().toISOString(),
+        })
         .eq("id", attachment.id);
       if (data.runId) {
         await supabase.from("processing_events").insert({
@@ -421,7 +426,7 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           import_id: attachment.import_id,
           attachment_id: attachment.id,
           filename: attachment.filename,
-          outcome: "error",
+          outcome: isDeferred ? "deferred" : "error",
           duration_ms: Date.now() - startedAt,
           error: message.slice(0, 800),
         });
