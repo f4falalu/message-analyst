@@ -485,12 +485,18 @@ export type Database = {
     }
     Functions: {
       claim_attachments: {
-        Args: { _import_id: string; _limit: number }
+        Args: {
+          _import_id: string
+          _limit: number
+          _max_bytes?: number
+          _min_bytes?: number
+        }
         Returns: {
           filename: string
           id: string
           message_seq: number
           mime_type: string
+          size_bytes: number
           storage_path: string
         }[]
       }
