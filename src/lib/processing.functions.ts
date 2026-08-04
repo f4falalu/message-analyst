@@ -584,6 +584,8 @@ export const requeueAttachments = createServerFn({ method: "POST" })
       target = target.eq("ocr_status", "processing").or(`processed_at.is.null,processed_at.lt.${cutoff}`);
     } else if (data.scope === "skipped") {
       target = target.eq("ocr_status", "skipped");
+    } else if (data.scope === "deferred") {
+      target = target.eq("ocr_status", "deferred");
     } else {
       if (data.attachmentIds.length === 0) return { requeued: 0 };
       target = target.in("id", data.attachmentIds);
