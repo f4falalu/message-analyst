@@ -186,6 +186,19 @@ function Home() {
             }
           }
           setFailures(stored);
+
+          const storedLogs: Record<string, LogEntry[]> = {};
+          for (const row of rows) {
+            const raw = window.localStorage.getItem(LOG_KEY(row.id));
+            if (!raw) continue;
+            try {
+              const parsed: unknown = JSON.parse(raw);
+              if (Array.isArray(parsed)) storedLogs[row.id] = parsed as LogEntry[];
+            } catch {
+              window.localStorage.removeItem(LOG_KEY(row.id));
+            }
+          }
+          setLogs((current) => ({ ...storedLogs, ...current }));
         }
       });
   }, [busy]);
@@ -196,6 +209,38 @@ function Home() {
     if (list.length === 0) window.localStorage.removeItem(FAILURE_KEY(importId));
     else window.localStorage.setItem(FAILURE_KEY(importId), JSON.stringify(list.slice(0, 200)));
   };
+
+  // Every stage change is written to a small per-import log so the card can
+  // show what happened and when, even after a refresh.
+  const appendLog = (importId: string | null, label: string) => {
+    const key = importId ?? "pending";
+    const entry: LogEntry = { at: Date.now(), label };
+    setLogs((current) => {
+      const next = [...(current[key] ?? []), entry].slice(-100);
+      if (typeof window !== "undefined") window.localStorage.setItem(LOG_KEY(key), JSON.stringify(next));
+      return { ...current, [key]: next };
+    });
+  };
+
+  const adoptPendingLog = (importId: string) => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(LOG_KEY("pending"));
+    if (!raw) return;
+    window.localStorage.removeItem(LOG_KEY("pending"));
+    try {
+      const pending = JSON.parse(raw) as LogEntry[];
+      setLogs((current) => {
+        const merged = [...pending, ...(current[importId] ?? [])].slice(-100);
+        window.localStorage.setItem(LOG_KEY(importId), JSON.stringify(merged));
+        const { pending: _drop, ...rest } = current;
+        void _drop;
+        return { ...rest, [importId]: merged };
+      });
+    } catch {
+      /* ignore a corrupt log */
+    }
+  };
+
 
   const retryFailedUploads = (importId: string) => {
     setErrorsFor(null);
