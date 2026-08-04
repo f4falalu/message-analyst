@@ -110,12 +110,13 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
     if (!apiKey) throw new Error("AI is not configured for this project.");
 
     // Atomic claim: safe when several batches run at the same time.
-    const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", {
+    const claimArgs: { _import_id: string; _limit: number; _min_bytes?: number; _max_bytes?: number } = {
       _import_id: data.importId,
       _limit: data.limit,
-      _min_bytes: data.minBytes ?? undefined,
-      _max_bytes: data.maxBytes ?? undefined,
-    });
+    };
+    if (data.minBytes !== null) claimArgs._min_bytes = data.minBytes;
+    if (data.maxBytes !== null) claimArgs._max_bytes = data.maxBytes;
+    const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", claimArgs);
 
     if (claimError) throw new Error(claimError.message);
 
