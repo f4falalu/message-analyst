@@ -75,7 +75,10 @@ type MessageRow = {
   attachment_filename: string | null;
 };
 
-type Counts = { pending: number; done: number; error: number; skipped: number };
+type Counts = { pending: number; done: number; error: number; skipped: number; deferred: number };
+
+/** Files at or above this size are read alone on the heavy lane. */
+const HEAVY_FILE_BYTES = 4 * 1024 * 1024;
 
 type FileRow = {
   id: string;
