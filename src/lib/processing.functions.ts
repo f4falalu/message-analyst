@@ -113,8 +113,8 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
     const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", {
       _import_id: data.importId,
       _limit: data.limit,
-      _min_bytes: data.minBytes,
-      _max_bytes: data.maxBytes,
+      _min_bytes: data.minBytes ?? undefined,
+      _max_bytes: data.maxBytes ?? undefined,
     });
 
     if (claimError) throw new Error(claimError.message);
