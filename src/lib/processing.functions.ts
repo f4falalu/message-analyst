@@ -663,11 +663,57 @@ export const rebuildRecords = createServerFn({ method: "POST" })
 
     const built = buildRecords(messages, attachments, mappings);
 
+    // Documents that have NOT been read yet (queued, in flight, deferred or
+    // failed). Without this, a record built next to an unread file would look
+    // like the document simply didn't mention anything.
+    const unread: { message_seq: number | null; ocr_status: string }[] = [];
+    for (let from = 0; ; from += 500) {
+      const { data: page, error } = await supabase
+        .from("attachments")
+        .select("message_seq, ocr_status")
+        .eq("import_id", data.importId)
+        .in("ocr_status", ["pending", "processing", "deferred", "error"])
+        .order("filename", { ascending: true })
+        .range(from, from + 499);
+      if (error) throw new Error(error.message);
+      if (!page || page.length === 0) break;
+      unread.push(...page);
+      if (page.length < 500) break;
+    }
+
+    const unreadSeqs = unread
+      .map((row) => row.message_seq)
+      .filter((seq): seq is number => seq !== null)
+      .sort((a, b) => a - b);
+    const seqOf = new Map(attachments.map((a) => [a.id, a.message_seq] as const));
+
+    if (unread.length > 0) {
+      for (const record of built) {
+        const anchors = record.sources
+          .map((source) => (source.attachment_id ? seqOf.get(source.attachment_id) ?? null : null))
+          .filter((seq): seq is number => seq !== null);
+        const nearby = unreadSeqs.filter((seq) => anchors.some((anchor) => Math.abs(seq - anchor) <= 4)).length;
+        if (nearby === 0) continue;
+        record.issues = [
+          ...record.issues,
+          {
+            level: "warning" as const,
+            field: "sources",
+            message: `Evidence incomplete — ${nearby} attachment${nearby === 1 ? "" : "s"} near this record ${
+              nearby === 1 ? "has" : "have"
+            } not been read yet.`,
+          },
+        ];
+        record.needs_review = true;
+      }
+    }
+
     const { error: deleteError } = await supabase
       .from("request_records")
       .delete()
       .eq("import_id", data.importId);
     if (deleteError) throw new Error(deleteError.message);
+
 
     for (let i = 0; i < built.length; i += 200) {
       const slice = built.slice(i, i + 200);
