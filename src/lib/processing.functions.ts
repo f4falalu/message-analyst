@@ -147,6 +147,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
 
     let processed = 0;
     let failed = 0;
+    let deferred = 0;
     let rateLimited = false;
     let creditsExhausted = false;
 
