@@ -330,7 +330,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
 
-    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted, files };
+    return { processed, failed, deferred, remaining: count ?? 0, rateLimited, creditsExhausted, files };
   });
 
 export const reprocessAttachment = createServerFn({ method: "POST" })
