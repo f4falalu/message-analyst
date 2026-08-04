@@ -161,12 +161,21 @@ export async function readDocument(params: {
   if (isPdf) {
     const fileRes = await fetch(params.signedUrl);
     if (!fileRes.ok) throw new Error(`Could not download attachment (${fileRes.status})`);
-    const buffer = new Uint8Array(await fileRes.arrayBuffer());
-    let binary = "";
-    for (let i = 0; i < buffer.length; i += 8192) {
-      binary += String.fromCharCode(...buffer.subarray(i, i + 8192));
+    const bytes = new Uint8Array(await fileRes.arrayBuffer());
+    // A PDF has to be inlined as base64, which costs roughly 2.4x its size in
+    // memory. Anything very large is skipped rather than crashing the batch.
+    const MAX_PDF_BYTES = 6 * 1024 * 1024;
+    if (bytes.length > MAX_PDF_BYTES) {
+      throw new Error(
+        `PDF is too large to read automatically (${(bytes.length / 1024 / 1024).toFixed(1)} MB, limit 6 MB).`,
+      );
     }
-    const base64 = btoa(binary);
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += 8192) {
+      parts.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
+    }
+    const base64 = btoa(parts.join(""));
+    parts.length = 0;
     mediaBlock = {
       type: "file",
       file: { filename: params.filename, file_data: `data:application/pdf;base64,${base64}` },
