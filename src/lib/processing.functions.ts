@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { readDocument } from "./doc-reader.server";
+import { DeferError, readDocument } from "./doc-reader.server";
 import { buildRecords, chatFactsFor, type BuilderAttachment, type BuilderMessage } from "./record-builder";
 import { crossCheckSources, type Issue, type Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
@@ -23,7 +23,7 @@ export const startProcessingRun = createServerFn({ method: "POST" })
         .from("attachments")
         .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
         .eq("import_id", data.importId)
-        .in("ocr_status", ["error", "processing"]);
+        .in("ocr_status", ["error", "processing", "deferred"]);
       requeued = count ?? 0;
     }
 
@@ -85,25 +85,41 @@ export const finishProcessingRun = createServerFn({ method: "POST" })
   });
 
 export const processAttachmentBatch = createServerFn({ method: "POST" })
-  .inputValidator((input: { importId: string; limit?: number; runId?: string | null }) => ({
-    importId: String(input.importId),
-    // Kept small on purpose: each file in a batch is read into worker memory,
-    // and larger batches were tripping the server memory limit (502s).
-    limit: Math.max(1, Math.min(4, Number(input.limit ?? 3))),
-    runId: input.runId ? String(input.runId) : null,
-  }))
+  .inputValidator(
+    (input: {
+      importId: string;
+      limit?: number;
+      runId?: string | null;
+      minBytes?: number | null;
+      maxBytes?: number | null;
+    }) => ({
+      importId: String(input.importId),
+      // Kept small on purpose: each file in a batch is read into worker memory,
+      // and larger batches were tripping the server memory limit (502s).
+      limit: Math.max(1, Math.min(4, Number(input.limit ?? 3))),
+      runId: input.runId ? String(input.runId) : null,
+      // Size band: normal lanes take the small files, the heavy lane takes the
+      // big ones one at a time so a large document gets the whole memory budget.
+      minBytes: input.minBytes === null || input.minBytes === undefined ? null : Number(input.minBytes),
+      maxBytes: input.maxBytes === null || input.maxBytes === undefined ? null : Number(input.maxBytes),
+    }),
+  )
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
     const apiKey = process.env["LOVABLE_API_KEY"];
     if (!apiKey) throw new Error("AI is not configured for this project.");
 
     // Atomic claim: safe when several batches run at the same time.
-    const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", {
+    const claimArgs: { _import_id: string; _limit: number; _min_bytes?: number; _max_bytes?: number } = {
       _import_id: data.importId,
       _limit: data.limit,
-    });
+    };
+    if (data.minBytes !== null) claimArgs._min_bytes = data.minBytes;
+    if (data.maxBytes !== null) claimArgs._max_bytes = data.maxBytes;
+    const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", claimArgs);
 
     if (claimError) throw new Error(claimError.message);
+
     if (!pending || pending.length === 0) {
       const { count } = await supabase
         .from("attachments")
@@ -113,6 +129,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       return {
         processed: 0,
         failed: 0,
+        deferred: 0,
         remaining: count ?? 0,
         rateLimited: false,
         creditsExhausted: false,
@@ -131,6 +148,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
 
     let processed = 0;
     let failed = 0;
+    let deferred = 0;
     let rateLimited = false;
     let creditsExhausted = false;
 
@@ -257,12 +275,17 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("[429]")) rateLimited = true;
           if (message.includes("[402]")) creditsExhausted = true;
-          failed += 1;
           const requeued = message.includes("[429]");
+          // A deferred file is *unread*, not empty — it must never look like a
+          // document that was read and had nothing in it.
+          const isDeferred = error instanceof DeferError || (error as { deferred?: boolean })?.deferred === true;
+          if (!isDeferred) failed += 1;
+          else deferred += 1;
+          const outcome = requeued ? "requeued" : isDeferred ? "deferred" : "error";
           await supabase
             .from("attachments")
             .update({
-              ocr_status: requeued ? "pending" : "error",
+              ocr_status: requeued ? "pending" : isDeferred ? "deferred" : "error",
               ocr_error: message.slice(0, 800),
               processed_at: new Date().toISOString(),
             })
@@ -271,7 +294,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
           files.push({
             attachmentId: attachment.id,
             filename: attachment.filename,
-            outcome: requeued ? "requeued" : "error",
+            outcome,
             confidence: null,
             durationMs: Date.now() - startedAt,
             attempts: 1,
@@ -286,7 +309,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               import_id: data.importId,
               attachment_id: attachment.id,
               filename: attachment.filename,
-              outcome: requeued ? "requeued" : "error",
+              outcome,
               doc_type: null,
               confidence: null,
               field_confidence: null,
@@ -308,7 +331,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
 
-    return { processed, failed, remaining: count ?? 0, rateLimited, creditsExhausted, files };
+    return { processed, failed, deferred, remaining: count ?? 0, rateLimited, creditsExhausted, files };
   });
 
 export const reprocessAttachment = createServerFn({ method: "POST" })
@@ -388,9 +411,14 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
       return { ok: true, filename: attachment.filename, confidence: extracted.confidence, error: null as string | null };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
+      const isDeferred = caught instanceof DeferError || (caught as { deferred?: boolean })?.deferred === true;
       await supabase
         .from("attachments")
-        .update({ ocr_status: "error", ocr_error: message.slice(0, 800), processed_at: new Date().toISOString() })
+        .update({
+          ocr_status: isDeferred ? "deferred" : "error",
+          ocr_error: message.slice(0, 800),
+          processed_at: new Date().toISOString(),
+        })
         .eq("id", attachment.id);
       if (data.runId) {
         await supabase.from("processing_events").insert({
@@ -398,7 +426,7 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           import_id: attachment.import_id,
           attachment_id: attachment.id,
           filename: attachment.filename,
-          outcome: "error",
+          outcome: isDeferred ? "deferred" : "error",
           duration_ms: Date.now() - startedAt,
           error: message.slice(0, 800),
         });
@@ -556,6 +584,8 @@ export const requeueAttachments = createServerFn({ method: "POST" })
       target = target.eq("ocr_status", "processing").or(`processed_at.is.null,processed_at.lt.${cutoff}`);
     } else if (data.scope === "skipped") {
       target = target.eq("ocr_status", "skipped");
+    } else if (data.scope === "deferred") {
+      target = target.eq("ocr_status", "deferred");
     } else {
       if (data.attachmentIds.length === 0) return { requeued: 0 };
       target = target.in("id", data.attachmentIds);
@@ -633,11 +663,57 @@ export const rebuildRecords = createServerFn({ method: "POST" })
 
     const built = buildRecords(messages, attachments, mappings);
 
+    // Documents that have NOT been read yet (queued, in flight, deferred or
+    // failed). Without this, a record built next to an unread file would look
+    // like the document simply didn't mention anything.
+    const unread: { message_seq: number | null; ocr_status: string }[] = [];
+    for (let from = 0; ; from += 500) {
+      const { data: page, error } = await supabase
+        .from("attachments")
+        .select("message_seq, ocr_status")
+        .eq("import_id", data.importId)
+        .in("ocr_status", ["pending", "processing", "deferred", "error"])
+        .order("filename", { ascending: true })
+        .range(from, from + 499);
+      if (error) throw new Error(error.message);
+      if (!page || page.length === 0) break;
+      unread.push(...page);
+      if (page.length < 500) break;
+    }
+
+    const unreadSeqs = unread
+      .map((row) => row.message_seq)
+      .filter((seq): seq is number => seq !== null)
+      .sort((a, b) => a - b);
+    const seqOf = new Map(attachments.map((a) => [a.id, a.message_seq] as const));
+
+    if (unread.length > 0) {
+      for (const record of built) {
+        const anchors = record.sources
+          .map((source) => (source.attachment_id ? seqOf.get(source.attachment_id) ?? null : null))
+          .filter((seq): seq is number => seq !== null);
+        const nearby = unreadSeqs.filter((seq) => anchors.some((anchor) => Math.abs(seq - anchor) <= 4)).length;
+        if (nearby === 0) continue;
+        record.issues = [
+          ...record.issues,
+          {
+            level: "warning" as const,
+            field: "source_match",
+            message: `Evidence incomplete — ${nearby} attachment${nearby === 1 ? "" : "s"} near this record ${
+              nearby === 1 ? "has" : "have"
+            } not been read yet.`,
+          },
+        ];
+        record.needs_review = true;
+      }
+    }
+
     const { error: deleteError } = await supabase
       .from("request_records")
       .delete()
       .eq("import_id", data.importId);
     if (deleteError) throw new Error(deleteError.message);
+
 
     for (let i = 0; i < built.length; i += 200) {
       const slice = built.slice(i, i + 200);
@@ -687,6 +763,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
 
     return {
       records: built.length,
+      unreadAttachments: unread.length,
       needsReview: built.filter((record) => record.needs_review).length,
       flagged: built.filter((record) => record.issues.some((issue) => issue.level === "error")).length,
     };

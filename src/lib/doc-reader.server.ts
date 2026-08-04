@@ -3,6 +3,23 @@
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const MODEL = "google/gemini-3.6-flash";
 
+/** How large an inlined PDF may be. Heavy files are read one at a time. */
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Thrown when a document cannot be read *yet* (too large for the current
+ * ceiling). Callers must park it as "deferred" — never as read-and-empty,
+ * otherwise matching would claim the document said nothing.
+ */
+export class DeferError extends Error {
+  readonly deferred = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "DeferError";
+  }
+}
+
+
 export type FieldConfidence = {
   facility_name: number | null;
   items: number | null;
@@ -162,20 +179,24 @@ export async function readDocument(params: {
     const fileRes = await fetch(params.signedUrl);
     if (!fileRes.ok) throw new Error(`Could not download attachment (${fileRes.status})`);
     const bytes = new Uint8Array(await fileRes.arrayBuffer());
-    // A PDF has to be inlined as base64, which costs roughly 2.4x its size in
-    // memory. Anything very large is skipped rather than crashing the batch.
-    const MAX_PDF_BYTES = 6 * 1024 * 1024;
+    // A PDF has to be inlined as base64, which costs roughly 1.4x its size.
+    // Big files run alone on the heavy lane, so the ceiling can be generous.
     if (bytes.length > MAX_PDF_BYTES) {
-      throw new Error(
-        `PDF is too large to read automatically (${(bytes.length / 1024 / 1024).toFixed(1)} MB, limit 6 MB).`,
+      throw new DeferError(
+        `PDF is larger than the current reading limit (${(bytes.length / 1024 / 1024).toFixed(1)} MB, limit ${(
+          MAX_PDF_BYTES /
+          1024 /
+          1024
+        ).toFixed(0)} MB). Held back for a bigger pass — it has not been read yet.`,
       );
     }
-    const parts: string[] = [];
+    // Encode incrementally so the file is never held twice in memory.
+    let binary = "";
     for (let i = 0; i < bytes.length; i += 8192) {
-      parts.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
+      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     }
-    const base64 = btoa(parts.join(""));
-    parts.length = 0;
+    const base64 = btoa(binary);
+    binary = "";
     mediaBlock = {
       type: "file",
       file: { filename: params.filename, file_data: `data:application/pdf;base64,${base64}` },
@@ -183,6 +204,7 @@ export async function readDocument(params: {
   } else {
     mediaBlock = { type: "image_url", image_url: { url: params.signedUrl } };
   }
+
 
   const userText = params.chatContext
     ? `Surrounding WhatsApp conversation (context only — the document itself is authoritative):\n${params.chatContext}\n\nRead the attached document.`

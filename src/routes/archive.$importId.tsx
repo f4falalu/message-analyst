@@ -75,7 +75,10 @@ type MessageRow = {
   attachment_filename: string | null;
 };
 
-type Counts = { pending: number; done: number; error: number; skipped: number };
+type Counts = { pending: number; done: number; error: number; skipped: number; deferred: number };
+
+/** Files at or above this size are read alone on the heavy lane. */
+const HEAVY_FILE_BYTES = 4 * 1024 * 1024;
 
 type FileRow = {
   id: string;
@@ -206,7 +209,7 @@ function ArchivePage() {
   );
 
   const [importName, setImportName] = useState("");
-  const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0 });
+  const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0, deferred: 0 });
   const [records, setRecords] = useState<RequestRecord[]>([]);
   const [reading, setReading] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -223,6 +226,7 @@ function ArchivePage() {
   const [liveTotal, setLiveTotal] = useState(0);
   const [liveDone, setLiveDone] = useState(0);
   const [liveFailed, setLiveFailed] = useState(0);
+  const [liveDeferred, setLiveDeferred] = useState(0);
   const [liveStart, setLiveStart] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [reprocessing, setReprocessing] = useState<string | null>(null);
@@ -277,8 +281,8 @@ function ArchivePage() {
   const [searching, setSearching] = useState(false);
 
   const loadCounts = useCallback(async () => {
-    const statuses: (keyof Counts)[] = ["pending", "done", "error", "skipped"];
-    const next: Counts = { pending: 0, done: 0, error: 0, skipped: 0 };
+    const statuses: (keyof Counts)[] = ["pending", "done", "error", "skipped", "deferred"];
+    const next: Counts = { pending: 0, done: 0, error: 0, skipped: 0, deferred: 0 };
     await Promise.all(
       statuses.map(async (status) => {
         const { count } = await supabase
@@ -381,7 +385,7 @@ function ArchivePage() {
     void refreshFiles();
   }, [refreshFiles]);
 
-  const requeueScope = async (scope: "failed" | "stuck" | "skipped") => {
+  const requeueScope = async (scope: "failed" | "stuck" | "skipped" | "deferred") => {
     try {
       const result = await requeue({ data: { importId, scope } });
       toast.success(`${result.requeued.toLocaleString()} file(s) moved back into the queue.`);
@@ -424,6 +428,7 @@ function ArchivePage() {
     setLiveFiles([]);
     setLiveDone(0);
     setLiveFailed(0);
+    setLiveDeferred(0);
     setLiveStart(Date.now());
     const lanes = Number(concurrency);
     const chunk = Number(chunkSize);
@@ -445,7 +450,9 @@ function ArchivePage() {
 
       // Each lane pulls its own chunk of files; the backend hands out
       // non-overlapping batches, so lanes never read the same document.
-      const lane = async () => {
+      // Small files go through the parallel lanes; large ones get a lane of
+      // their own (one file at a time) so nothing has to be skipped.
+      const lane = async (band: { limit: number; minBytes?: number; maxBytes?: number }) => {
         for (;;) {
           if (stopped) return;
           if (parseStoppedRef.current) {
@@ -467,7 +474,15 @@ function ArchivePage() {
           let result: Awaited<ReturnType<typeof runBatch>> | null = null;
           for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
-              result = await runBatch({ data: { importId, limit: chunk, runId } });
+              result = await runBatch({
+                data: {
+                  importId,
+                  limit: band.limit,
+                  runId,
+                  minBytes: band.minBytes ?? null,
+                  maxBytes: band.maxBytes ?? null,
+                },
+              });
               break;
             } catch (batchError) {
               if (attempt === 3) throw batchError;
@@ -481,6 +496,7 @@ function ArchivePage() {
           }
           setLiveDone((current) => current + result.processed);
           setLiveFailed((current) => current + result.failed);
+          if (result.deferred) setLiveDeferred((current) => current + result.deferred);
           void loadCounts();
           if (result.creditsExhausted) {
             stopped = true;
@@ -492,11 +508,16 @@ function ArchivePage() {
             await new Promise((resolve) => setTimeout(resolve, 8000));
             continue;
           }
-          if (result.processed === 0 && result.failed === 0) return;
+          if (result.processed === 0 && result.failed === 0 && result.deferred === 0) return;
         }
       };
 
-      await Promise.all(Array.from({ length: lanes }, () => lane()));
+      await Promise.all([
+        ...Array.from({ length: lanes }, () => lane({ limit: chunk, maxBytes: HEAVY_FILE_BYTES })),
+        // Heavy lane: one big document at a time, in parallel with the rest.
+        lane({ limit: 1, minBytes: HEAVY_FILE_BYTES }),
+      ]);
+
       await endRun({ data: { runId, status: stopped ? "stopped" : "completed", notes: stopReason } });
       if (!stopped) toast.success("Reading finished.");
     } catch (error) {
@@ -626,7 +647,7 @@ function ArchivePage() {
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
   const totalPaid = filtered.reduce((sum, record) => sum + (record.amount_paid ?? 0), 0);
 
-  const liveHandled = liveDone + liveFailed;
+  const liveHandled = liveDone + liveFailed + liveDeferred;
   const livePercent = liveTotal ? Math.min(100, Math.round((liveHandled / liveTotal) * 100)) : readPercent;
   const elapsedMs = liveStart ? nowTick - liveStart : 0;
   const perFileMs = liveHandled > 0 && elapsedMs > 0 ? elapsedMs / liveHandled : 0;
@@ -672,7 +693,8 @@ function ArchivePage() {
               <h2 className="font-serif text-xl text-foreground">Document reading</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {counts.done.toLocaleString()} read · {counts.pending.toLocaleString()} waiting ·{" "}
-                {counts.error.toLocaleString()} failed · {counts.skipped.toLocaleString()} not readable
+                {counts.error.toLocaleString()} failed · {counts.deferred.toLocaleString()} held back ·{" "}
+                {counts.skipped.toLocaleString()} not readable
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-2">
@@ -745,7 +767,7 @@ function ArchivePage() {
             {reading ? (
               <span className="text-foreground">
                 {liveHandled.toLocaleString()} / {liveTotal.toLocaleString()} files ·{" "}
-                {liveFailed.toLocaleString()} failed · elapsed {formatDuration(elapsedMs)} ·{" "}
+                {liveFailed.toLocaleString()} failed · {liveDeferred.toLocaleString()} held back · elapsed {formatDuration(elapsedMs)} ·{" "}
                 {etaMs > 0 ? `about ${formatDuration(etaMs)} left` : "estimating…"}
                 {perFileMs > 0 ? ` · ${(perFileMs / 1000).toFixed(1)}s per file` : ""}
               </span>
@@ -828,6 +850,7 @@ function ArchivePage() {
                   <SelectItem value="processing">In progress</SelectItem>
                   <SelectItem value="done">Read</SelectItem>
                   <SelectItem value="error">Failed</SelectItem>
+                  <SelectItem value="deferred">Held back</SelectItem>
                   <SelectItem value="skipped">Skipped</SelectItem>
                 </SelectContent>
               </Select>
@@ -839,6 +862,13 @@ function ArchivePage() {
               </Button>
               <Button variant="outline" onClick={() => void requeueScope("skipped")}>
                 Queue skipped
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void requeueScope("deferred")}
+                disabled={counts.deferred === 0}
+              >
+                Queue held back
               </Button>
               <Button variant="ghost" onClick={() => void refreshFiles()} disabled={filesLoading}>
                 {filesLoading ? "Refreshing…" : "Refresh"}
