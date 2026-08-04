@@ -386,6 +386,7 @@ function Home() {
         navigate({ to: "/archive/$importId", params: { importId: result.importId } });
       }
     } catch (error) {
+      appendLog(importId, error instanceof Error ? `Failed — ${error.message}` : "Import failed");
       toast.error(
         error instanceof Error
           ? `${error.message} — everything uploaded so far is saved; resume with the same zip to continue.`
@@ -397,15 +398,19 @@ function Home() {
       pausedRef.current = false;
       cancelledRef.current = false;
       setProgress(null);
+      setRate(null);
       setResumeId(null);
       setActiveImportId(null);
     }
   };
 
-
-
   const percent =
     progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : null;
+  const bytePercent =
+    progress?.bytesTotal && progress.bytesTotal > 0
+      ? Math.round(((progress.bytesDone ?? 0) / progress.bytesTotal) * 100)
+      : null;
+
 
   return (
     <main className="min-h-screen bg-background">
