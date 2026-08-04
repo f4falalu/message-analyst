@@ -533,11 +533,64 @@ function Home() {
 
               ) : (
                 <div className="space-y-4">
+                  {snapshot ? (
+                    <div className="space-y-3 rounded-lg border border-border/60 bg-card/60 p-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        Upload interrupted
+                      </p>
+                      <p className="text-sm text-foreground">
+                        {snapshot.zipName} stopped at{" "}
+                        {snapshot.total > 0
+                          ? `${snapshot.current.toLocaleString()} of ${snapshot.total.toLocaleString()} files`
+                          : snapshot.message}
+                        {snapshot.bytesTotal > 0
+                          ? ` · ${formatBytes(snapshot.bytesDone)} of ${formatBytes(snapshot.bytesTotal)}`
+                          : ""}{" "}
+                        on {new Date(snapshot.updatedAt).toLocaleString()}.
+                      </p>
+                      {snapshot.total > 0 ? (
+                        <Progress value={Math.round((snapshot.current / snapshot.total) * 100)} />
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setResumeId(snapshot.importId);
+                            inputRef.current?.click();
+                          }}
+                        >
+                          <Play className="size-4" />
+                          Continue this upload
+                        </Button>
+                        {snapshot.importId ? (
+                          <Button size="sm" variant="outline" onClick={() => setErrorsFor(snapshot.importId)}>
+                            <AlertTriangle className="size-4" />
+                            Retry failed items
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setSnapshot(null);
+                            if (typeof window !== "undefined") window.localStorage.removeItem(SNAPSHOT_KEY);
+                          }}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Your browser can&apos;t hold a multi-gigabyte file across a refresh, so pick the same zip
+                        again — only the files still missing are sent.
+                      </p>
+                    </div>
+                  ) : null}
                   <p className="font-serif text-xl text-foreground">Choose your WhatsApp export</p>
                   <p className="text-sm text-muted-foreground">
                     The whole zip, straight from WhatsApp&apos;s &ldquo;Export chat &rarr; Attach media&rdquo;.
                     Nothing is loaded into memory all at once, so multi-gigabyte exports are fine.
                   </p>
+
                   <Button
                     size="lg"
                     onClick={() => {
