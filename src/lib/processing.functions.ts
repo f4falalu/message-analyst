@@ -698,7 +698,7 @@ export const rebuildRecords = createServerFn({ method: "POST" })
           ...record.issues,
           {
             level: "warning" as const,
-            field: "sources",
+            field: "source_match",
             message: `Evidence incomplete — ${nearby} attachment${nearby === 1 ? "" : "s"} near this record ${
               nearby === 1 ? "has" : "have"
             } not been read yet.`,
