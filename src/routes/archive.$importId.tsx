@@ -646,7 +646,7 @@ function ArchivePage() {
   const readPercent = totalReadable ? Math.round((totalRead / totalReadable) * 100) : 0;
   const totalPaid = filtered.reduce((sum, record) => sum + (record.amount_paid ?? 0), 0);
 
-  const liveHandled = liveDone + liveFailed;
+  const liveHandled = liveDone + liveFailed + liveDeferred;
   const livePercent = liveTotal ? Math.min(100, Math.round((liveHandled / liveTotal) * 100)) : readPercent;
   const elapsedMs = liveStart ? nowTick - liveStart : 0;
   const perFileMs = liveHandled > 0 && elapsedMs > 0 ? elapsedMs / liveHandled : 0;
