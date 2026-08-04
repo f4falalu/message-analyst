@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Play, Pause, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { ingestZip, type IngestProgress } from "@/lib/ingest";
 import { Button } from "@/components/ui/button";
