@@ -87,7 +87,9 @@ export const finishProcessingRun = createServerFn({ method: "POST" })
 export const processAttachmentBatch = createServerFn({ method: "POST" })
   .inputValidator((input: { importId: string; limit?: number; runId?: string | null }) => ({
     importId: String(input.importId),
-    limit: Math.max(1, Math.min(12, Number(input.limit ?? 6))),
+    // Kept small on purpose: each file in a batch is read into worker memory,
+    // and larger batches were tripping the server memory limit (502s).
+    limit: Math.max(1, Math.min(4, Number(input.limit ?? 3))),
     runId: input.runId ? String(input.runId) : null,
   }))
   .handler(async ({ data }) => {
