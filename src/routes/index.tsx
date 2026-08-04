@@ -667,10 +667,52 @@ function Home() {
                   ) : null}
 
                   {busy && activeImportId === row.id ? (
-                    <p className="text-xs text-muted-foreground">
-                      {paused ? "Paused" : progress?.message ?? "Uploading…"}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        {paused ? "Paused" : progress?.message ?? "Uploading…"}
+                      </p>
+                      {!paused && rate ? (
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          {formatSpeed(rate.bytesPerSecond)} · {formatDuration(rate.etaSeconds)} left
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
+
+                  <Collapsible
+                    open={openLog === row.id}
+                    onOpenChange={(open) => setOpenLog(open ? row.id : null)}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
+                        <ListChecks className="size-3.5" />
+                        Processing log
+                        {(logs[row.id]?.length ?? 0) > 0 ? ` (${logs[row.id]!.length})` : ""}
+                        <ChevronDown
+                          className={`size-3.5 transition-transform ${openLog === row.id ? "rotate-180" : ""}`}
+                        />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <ol className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/50 p-2 text-xs">
+                        {(logs[row.id] ?? []).length === 0 ? (
+                          <li className="text-muted-foreground">
+                            No steps recorded yet — they appear as this import runs.
+                          </li>
+                        ) : (
+                          [...(logs[row.id] ?? [])].reverse().map((entry, index) => (
+                            <li key={`${entry.at}-${index}`} className="flex gap-2">
+                              <span className="tabular-nums text-muted-foreground">
+                                {new Date(entry.at).toLocaleTimeString()}
+                              </span>
+                              <span className="text-foreground">{entry.label}</span>
+                            </li>
+                          ))
+                        )}
+                      </ol>
+                    </CollapsibleContent>
+                  </Collapsible>
+
 
                   <div className="flex flex-wrap items-center gap-2">
                     <Button asChild variant="outline" size="sm">
