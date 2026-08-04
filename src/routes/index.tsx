@@ -428,6 +428,15 @@ function Home() {
                         Open archive
                       </Link>
                     </Button>
+                    <Button
+                      size="sm"
+                      variant={(failures[row.id]?.length ?? 0) > 0 ? "destructive" : "ghost"}
+                      onClick={() => setErrorsFor(row.id)}
+                    >
+                      <AlertTriangle className="size-4" />
+                      Error details
+                      {(failures[row.id]?.length ?? 0) > 0 ? ` (${failures[row.id]!.length})` : ""}
+                    </Button>
                     {(() => {
                       const isActive = busy && activeImportId === row.id;
                       const canResume = (!isActive && row.status !== "ready") || (isActive && paused);
@@ -494,6 +503,80 @@ function Home() {
           </div>
         </section>
       ) : null}
+
+      <Sheet open={errorsFor !== null} onOpenChange={(open) => setErrorsFor(open ? errorsFor : null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          {(() => {
+            const row = imports.find((item) => item.id === errorsFor);
+            const list = errorsFor ? failures[errorsFor] ?? [] : [];
+            const last = list[list.length - 1];
+            return (
+              <>
+                <SheetHeader>
+                  <SheetTitle className="font-serif">Error details</SheetTitle>
+                  <SheetDescription>{row?.filename ?? "This import"}</SheetDescription>
+                </SheetHeader>
+                <div className="space-y-5 px-4 pb-8">
+                  <div className="rounded-lg border border-border/60 bg-card/60 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last failure</p>
+                    <p className="mt-2 text-sm text-foreground">
+                      {last ? `${last.filename} — ${last.reason}` : row?.notes ?? "No failures recorded for this import."}
+                    </p>
+                  </div>
+
+                  {list.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        {list.length.toLocaleString()} file(s) failed to upload
+                      </p>
+                      <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
+                        {list.map((failure) => (
+                          <li key={failure.filename} className="rounded-md border border-border/50 p-3">
+                            <p className="truncate font-medium text-foreground">{failure.filename}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{failure.reason}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={!errorsFor || busy}
+                      onClick={() => errorsFor && retryFailedUploads(errorsFor)}
+                    >
+                      <RotateCcw className="size-4" />
+                      Retry failed uploads
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!errorsFor || requeuing}
+                      onClick={() => errorsFor && void retryFailedParses(errorsFor)}
+                    >
+                      Re-queue failed reads
+                    </Button>
+                    {list.length > 0 ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => errorsFor && rememberFailures(errorsFor, [])}
+                      >
+                        Clear list
+                      </Button>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Retrying uploads sends only the files missing from this import — everything already stored is
+                    untouched. Re-queueing failed reads puts files that failed extraction back in the parse queue.
+                  </p>
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
     </main>
   );
 }
