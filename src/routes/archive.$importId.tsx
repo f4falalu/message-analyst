@@ -214,7 +214,7 @@ function ArchivePage() {
   const [statusFilter, setStatusFilter] = useState("all");
 
   const [concurrency, setConcurrency] = useState("4");
-  const [chunkSize, setChunkSize] = useState("6");
+  const [chunkSize, setChunkSize] = useState("3");
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
