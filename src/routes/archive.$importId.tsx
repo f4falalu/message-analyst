@@ -385,7 +385,7 @@ function ArchivePage() {
     void refreshFiles();
   }, [refreshFiles]);
 
-  const requeueScope = async (scope: "failed" | "stuck" | "skipped") => {
+  const requeueScope = async (scope: "failed" | "stuck" | "skipped" | "deferred") => {
     try {
       const result = await requeue({ data: { importId, scope } });
       toast.success(`${result.requeued.toLocaleString()} file(s) moved back into the queue.`);
@@ -428,6 +428,7 @@ function ArchivePage() {
     setLiveFiles([]);
     setLiveDone(0);
     setLiveFailed(0);
+    setLiveDeferred(0);
     setLiveStart(Date.now());
     const lanes = Number(concurrency);
     const chunk = Number(chunkSize);
@@ -692,7 +693,8 @@ function ArchivePage() {
               <h2 className="font-serif text-xl text-foreground">Document reading</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {counts.done.toLocaleString()} read · {counts.pending.toLocaleString()} waiting ·{" "}
-                {counts.error.toLocaleString()} failed · {counts.skipped.toLocaleString()} not readable
+                {counts.error.toLocaleString()} failed · {counts.deferred.toLocaleString()} held back ·{" "}
+                {counts.skipped.toLocaleString()} not readable
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-2">
@@ -765,7 +767,7 @@ function ArchivePage() {
             {reading ? (
               <span className="text-foreground">
                 {liveHandled.toLocaleString()} / {liveTotal.toLocaleString()} files ·{" "}
-                {liveFailed.toLocaleString()} failed · elapsed {formatDuration(elapsedMs)} ·{" "}
+                {liveFailed.toLocaleString()} failed · {liveDeferred.toLocaleString()} held back · elapsed {formatDuration(elapsedMs)} ·{" "}
                 {etaMs > 0 ? `about ${formatDuration(etaMs)} left` : "estimating…"}
                 {perFileMs > 0 ? ` · ${(perFileMs / 1000).toFixed(1)}s per file` : ""}
               </span>
@@ -848,6 +850,7 @@ function ArchivePage() {
                   <SelectItem value="processing">In progress</SelectItem>
                   <SelectItem value="done">Read</SelectItem>
                   <SelectItem value="error">Failed</SelectItem>
+                  <SelectItem value="deferred">Held back</SelectItem>
                   <SelectItem value="skipped">Skipped</SelectItem>
                 </SelectContent>
               </Select>
@@ -859,6 +862,13 @@ function ArchivePage() {
               </Button>
               <Button variant="outline" onClick={() => void requeueScope("skipped")}>
                 Queue skipped
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void requeueScope("deferred")}
+                disabled={counts.deferred === 0}
+              >
+                Queue held back
               </Button>
               <Button variant="ghost" onClick={() => void refreshFiles()} disabled={filesLoading}>
                 {filesLoading ? "Refreshing…" : "Refresh"}
