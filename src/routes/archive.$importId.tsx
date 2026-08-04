@@ -462,7 +462,19 @@ function ArchivePage() {
             stopReason = "Stopped by hand";
             return;
           }
-          const result = await runBatch({ data: { importId, limit: chunk, runId } });
+          // A single failed round trip (server hiccup, dropped connection)
+          // must not end the whole run — back off and try the chunk again.
+          let result: Awaited<ReturnType<typeof runBatch>> | null = null;
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+              result = await runBatch({ data: { importId, limit: chunk, runId } });
+              break;
+            } catch (batchError) {
+              if (attempt === 3) throw batchError;
+              await new Promise((resolve) => setTimeout(resolve, attempt * 3000));
+            }
+          }
+          if (!result) return;
 
           if (result.files.length) {
             setLiveFiles((current) => [...result.files, ...current].slice(0, 40));
