@@ -7,7 +7,13 @@ export type IngestProgress = {
   message: string;
   current: number;
   total: number;
+  /** Bytes of attachment data already sent (and the total expected), for the byte-level bar. */
+  bytesDone?: number;
+  bytesTotal?: number;
 };
+
+/** A file that could not be uploaded, with the reason the last attempt gave. */
+export type IngestFailure = { filename: string; reason: string };
 
 /** Lets the UI pause or stop an upload that is already running. */
 export type IngestControl = {
@@ -66,7 +72,7 @@ export async function ingestZip(
   attachments: number;
   readable: number;
   skipped: number;
-  failed: string[];
+  failed: IngestFailure[];
   cancelled: boolean;
 }> {
   const control = options.control;
@@ -227,7 +233,14 @@ export async function ingestZip(
     let uploaded = 0;
     let readable = 0;
     let saved = 0;
-    const failed: string[] = [];
+    let bytesDone = 0;
+    const entrySize = (entry: Entry) => Number((entry as { uncompressedSize?: number }).uncompressedSize ?? 0);
+    const bytesTotal = mediaEntries.reduce((sum, entry) => sum + entrySize(entry), 0);
+    const skippedBytes = mediaEntries
+      .filter((entry) => alreadyStored.has(baseName(entry.filename).toLowerCase()))
+      .reduce((sum, entry) => sum + entrySize(entry), 0);
+    bytesDone = skippedBytes;
+    const failed: IngestFailure[] = [];
     let pending: Row[] = [];
     let flushing: Promise<void> = Promise.resolve();
 
@@ -262,6 +275,8 @@ export async function ingestZip(
           (failed.length ? ` · ${failed.length.toLocaleString()} failed, will retry on resume` : ""),
         current: done,
         total: mediaEntries.length,
+        bytesDone,
+        bytesTotal,
       });
     };
 
@@ -278,6 +293,8 @@ export async function ingestZip(
             message: `Paused — ${done.toLocaleString()} of ${mediaEntries.length.toLocaleString()} files uploaded.`,
             current: done,
             total: mediaEntries.length,
+            bytesDone,
+            bytesTotal,
           });
         }
         await sleep(300);
@@ -316,12 +333,17 @@ export async function ingestZip(
             ocr_status: canRead ? "pending" : "skipped",
           });
           uploaded += 1;
+          bytesDone += blob.size;
           flush(false);
           break;
         } catch (uploadError) {
           if (attempt === MAX_ATTEMPTS) {
             // One bad file must not sink the whole import — note it and move on.
-            failed.push(filename);
+            failed.push({
+              filename,
+              reason: uploadError instanceof Error ? uploadError.message : String(uploadError),
+            });
+            bytesDone += entrySize(entry);
             break;
           }
           if (isCancelled()) break;
@@ -347,7 +369,7 @@ export async function ingestZip(
         notes: cancelled
           ? `Upload cancelled — ${remaining.toLocaleString()} file(s) left; resume to continue.`
           : failed.length
-            ? `${failed.length} file(s) failed to upload — resume to retry.`
+            ? `${failed.length} file(s) failed to upload — last error: ${failed[failed.length - 1]?.reason ?? "unknown"}`
             : null,
       })
       .eq("id", importId);
