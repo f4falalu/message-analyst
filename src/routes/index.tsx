@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Play, Pause, X, AlertTriangle, RotateCcw } from "lucide-react";
+import { Play, Pause, X, AlertTriangle, RotateCcw, ChevronDown, ListChecks } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { ingestZip, type IngestProgress, type IngestFailure } from "@/lib/ingest";
 import { requeueAttachments } from "@/lib/processing.functions";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sheet,
   SheetContent,
@@ -28,7 +29,25 @@ type ImportRow = {
   notes: string | null;
 };
 
+/** One line in the per-import processing log. */
+type LogEntry = { at: number; label: string };
+
+/** Snapshot of an upload, kept so a page refresh can show where it stopped. */
+type UploadSnapshot = {
+  importId: string | null;
+  zipName: string;
+  phase: string;
+  message: string;
+  current: number;
+  total: number;
+  bytesDone: number;
+  bytesTotal: number;
+  updatedAt: number;
+};
+
 const FAILURE_KEY = (importId: string) => `upload-failures:${importId}`;
+const LOG_KEY = (importId: string) => `upload-log:${importId}`;
+const SNAPSHOT_KEY = "upload-snapshot";
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
@@ -36,6 +55,33 @@ function formatBytes(bytes: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
+
+function formatSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "—";
+  const mbps = bytesPerSecond / 1_048_576;
+  if (mbps < 1) return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+  return `${mbps.toFixed(mbps < 10 ? 2 : 1)} MB/s`;
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  reading: "Extract — opening the zip",
+  parsing: "Parse chat.txt — reading the conversation",
+  indexing: "Match attachments — saving messages and contacts",
+  uploading: "Upload attachments",
+  paused: "Paused",
+  done: "Export ready — upload finished",
+};
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
