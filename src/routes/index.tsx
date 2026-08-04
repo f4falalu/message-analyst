@@ -125,9 +125,30 @@ function Home() {
   const [failures, setFailures] = useState<Record<string, IngestFailure[]>>({});
   const [errorsFor, setErrorsFor] = useState<string | null>(null);
   const [requeuing, setRequeuing] = useState(false);
+  const [logs, setLogs] = useState<Record<string, LogEntry[]>>({});
+  const [openLog, setOpenLog] = useState<string | null>(null);
+  const [rate, setRate] = useState<{ bytesPerSecond: number; etaSeconds: number } | null>(null);
+  const [snapshot, setSnapshot] = useState<UploadSnapshot | null>(null);
   const requeue = useServerFn(requeueAttachments);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
+  const samplesRef = useRef<{ at: number; bytes: number }[]>([]);
+  const lastPhaseRef = useRef<string | null>(null);
+
+  // Restore the last upload snapshot so a refresh mid-upload still shows where
+  // the run stopped and which import to retry.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as UploadSnapshot;
+      if (parsed && parsed.phase !== "done") setSnapshot(parsed);
+    } catch {
+      window.localStorage.removeItem(SNAPSHOT_KEY);
+    }
+  }, []);
+
 
   useEffect(() => {
     supabase
