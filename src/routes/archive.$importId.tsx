@@ -209,7 +209,7 @@ function ArchivePage() {
   );
 
   const [importName, setImportName] = useState("");
-  const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0 });
+  const [counts, setCounts] = useState<Counts>({ pending: 0, done: 0, error: 0, skipped: 0, deferred: 0 });
   const [records, setRecords] = useState<RequestRecord[]>([]);
   const [reading, setReading] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -226,6 +226,7 @@ function ArchivePage() {
   const [liveTotal, setLiveTotal] = useState(0);
   const [liveDone, setLiveDone] = useState(0);
   const [liveFailed, setLiveFailed] = useState(0);
+  const [liveDeferred, setLiveDeferred] = useState(0);
   const [liveStart, setLiveStart] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [reprocessing, setReprocessing] = useState<string | null>(null);
