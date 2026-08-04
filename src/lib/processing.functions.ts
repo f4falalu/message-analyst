@@ -23,7 +23,7 @@ export const startProcessingRun = createServerFn({ method: "POST" })
         .from("attachments")
         .update({ ocr_status: "pending", ocr_error: null }, { count: "exact" })
         .eq("import_id", data.importId)
-        .in("ocr_status", ["error", "processing"]);
+        .in("ocr_status", ["error", "processing", "deferred"]);
       requeued = count ?? 0;
     }
 
