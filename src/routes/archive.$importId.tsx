@@ -686,7 +686,7 @@ function ArchivePage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["2", "4", "6", "8", "12"].map((value) => (
+                    {["1", "2", "3", "4"].map((value) => (
                       <SelectItem key={value} value={value}>
                         {value}
                       </SelectItem>
