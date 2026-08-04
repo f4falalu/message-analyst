@@ -1,13 +1,22 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Play, Pause, X } from "lucide-react";
+import { Play, Pause, X, AlertTriangle, RotateCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { ingestZip, type IngestProgress } from "@/lib/ingest";
+import { ingestZip, type IngestProgress, type IngestFailure } from "@/lib/ingest";
+import { requeueAttachments } from "@/lib/processing.functions";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 type ImportRow = {
   id: string;
@@ -16,7 +25,17 @@ type ImportRow = {
   message_count: number;
   total_files: number;
   created_at: string;
+  notes: string | null;
 };
+
+const FAILURE_KEY = (importId: string) => `upload-failures:${importId}`;
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  const mb = bytes / 1_048_576;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -57,13 +76,17 @@ function Home() {
   const [resumeId, setResumeId] = useState<string | null>(null);
   const [activeImportId, setActiveImportId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  const [failures, setFailures] = useState<Record<string, IngestFailure[]>>({});
+  const [errorsFor, setErrorsFor] = useState<string | null>(null);
+  const [requeuing, setRequeuing] = useState(false);
+  const requeue = useServerFn(requeueAttachments);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
 
   useEffect(() => {
     supabase
       .from("imports")
-      .select("id, filename, status, message_count, total_files, created_at")
+      .select("id, filename, status, message_count, total_files, created_at, notes")
       .order("created_at", { ascending: false })
       .then(async ({ data, error }) => {
         if (error) {
@@ -83,8 +106,52 @@ function Home() {
           }),
         );
         setUploadedCounts(counts);
+        if (typeof window !== "undefined") {
+          const stored: Record<string, IngestFailure[]> = {};
+          for (const row of rows) {
+            const raw = window.localStorage.getItem(FAILURE_KEY(row.id));
+            if (!raw) continue;
+            try {
+              const parsed: unknown = JSON.parse(raw);
+              if (Array.isArray(parsed)) stored[row.id] = parsed as IngestFailure[];
+            } catch {
+              window.localStorage.removeItem(FAILURE_KEY(row.id));
+            }
+          }
+          setFailures(stored);
+        }
       });
   }, [busy]);
+
+  const rememberFailures = (importId: string, list: IngestFailure[]) => {
+    setFailures((current) => ({ ...current, [importId]: list }));
+    if (typeof window === "undefined") return;
+    if (list.length === 0) window.localStorage.removeItem(FAILURE_KEY(importId));
+    else window.localStorage.setItem(FAILURE_KEY(importId), JSON.stringify(list.slice(0, 200)));
+  };
+
+  const retryFailedUploads = (importId: string) => {
+    setErrorsFor(null);
+    setResumeId(importId);
+    toast.info("Choose the same zip — only the failed files are sent again.");
+    inputRef.current?.click();
+  };
+
+  const retryFailedParses = async (importId: string) => {
+    setRequeuing(true);
+    try {
+      const result = await requeue({ data: { importId, scope: "failed" } });
+      toast.success(
+        result.requeued > 0
+          ? `${result.requeued.toLocaleString()} failed file(s) put back in the parse queue.`
+          : "No failed files left to queue.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not re-queue those files.");
+    } finally {
+      setRequeuing(false);
+    }
+  };
 
   // Remembers which import each zip belongs to, so dropping the same file
   // again continues that import instead of starting a fresh one.
@@ -124,6 +191,7 @@ function Home() {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(zipKey(file), result.importId);
       }
+      rememberFailures(result.importId, result.failed);
 
       if (result.cancelled) {
         toast.info(
@@ -131,7 +199,7 @@ function Home() {
         );
       } else if (result.failed.length > 0) {
         toast.warning(
-          `${result.attachments.toLocaleString()} files uploaded, ${result.failed.length.toLocaleString()} failed — press “Resume upload” with the same zip to retry just those.`,
+          `${result.attachments.toLocaleString()} files uploaded, ${result.failed.length.toLocaleString()} failed — open “Error details” on the import card to see why and retry just those.`,
         );
       } else {
         toast.success(
@@ -205,8 +273,23 @@ function Home() {
               />
               {busy ? (
                 <div className="space-y-4">
-                  <p className="text-sm text-foreground">{progress?.message ?? "Working…"}</p>
+                  <div className="flex items-baseline justify-between gap-4">
+                    <p className="text-sm text-foreground">{progress?.message ?? "Working…"}</p>
+                    <span className="font-serif text-2xl tabular-nums text-foreground">
+                      {percent ?? 0}%
+                    </span>
+                  </div>
                   <Progress value={percent ?? undefined} />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {(progress?.current ?? 0).toLocaleString()} of {(progress?.total ?? 0).toLocaleString()} files
+                    </span>
+                    {progress?.bytesTotal ? (
+                      <span className="tabular-nums">
+                        {formatBytes(progress.bytesDone ?? 0)} of {formatBytes(progress.bytesTotal)} uploaded
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {paused ? (
                       <Button
