@@ -85,13 +85,25 @@ export const finishProcessingRun = createServerFn({ method: "POST" })
   });
 
 export const processAttachmentBatch = createServerFn({ method: "POST" })
-  .inputValidator((input: { importId: string; limit?: number; runId?: string | null }) => ({
-    importId: String(input.importId),
-    // Kept small on purpose: each file in a batch is read into worker memory,
-    // and larger batches were tripping the server memory limit (502s).
-    limit: Math.max(1, Math.min(4, Number(input.limit ?? 3))),
-    runId: input.runId ? String(input.runId) : null,
-  }))
+  .inputValidator(
+    (input: {
+      importId: string;
+      limit?: number;
+      runId?: string | null;
+      minBytes?: number | null;
+      maxBytes?: number | null;
+    }) => ({
+      importId: String(input.importId),
+      // Kept small on purpose: each file in a batch is read into worker memory,
+      // and larger batches were tripping the server memory limit (502s).
+      limit: Math.max(1, Math.min(4, Number(input.limit ?? 3))),
+      runId: input.runId ? String(input.runId) : null,
+      // Size band: normal lanes take the small files, the heavy lane takes the
+      // big ones one at a time so a large document gets the whole memory budget.
+      minBytes: input.minBytes === null || input.minBytes === undefined ? null : Number(input.minBytes),
+      maxBytes: input.maxBytes === null || input.maxBytes === undefined ? null : Number(input.maxBytes),
+    }),
+  )
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
     const apiKey = process.env["LOVABLE_API_KEY"];
@@ -101,9 +113,12 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
     const { data: pending, error: claimError } = await supabase.rpc("claim_attachments", {
       _import_id: data.importId,
       _limit: data.limit,
+      _min_bytes: data.minBytes,
+      _max_bytes: data.maxBytes,
     });
 
     if (claimError) throw new Error(claimError.message);
+
     if (!pending || pending.length === 0) {
       const { count } = await supabase
         .from("attachments")
