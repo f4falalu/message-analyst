@@ -1140,17 +1140,19 @@ function ArchivePage() {
                     <TableHead>Paid</TableHead>
                     <TableHead className="min-w-40">Contact</TableHead>
                     <TableHead>Flags</TableHead>
+                    <TableHead className="text-right">Evidence</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-16 text-center text-sm text-muted-foreground">
-                        No records yet. Read the documents, then build the ledger.
+                      <TableCell colSpan={8} className="py-16 text-center text-sm text-muted-foreground">
+                        No records match. Read the documents, build the ledger, or relax the filters.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map((record) => (
+                    filtered.flatMap((record) => {
+                      const rows = [
                       <TableRow key={record.id} className="align-top">
                         <TableCell className="font-medium">{record.facility_name ?? "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">
@@ -1191,9 +1193,97 @@ function ArchivePage() {
                             ))}
                           </div>
                         </TableCell>
-                      </TableRow>
-                    ))
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={evidenceLoading === record.id}
+                            onClick={() => void toggleEvidence(record.id)}
+                          >
+                            {evidenceLoading === record.id
+                              ? "Loading…"
+                              : expandedRecord === record.id
+                                ? "Hide files"
+                                : "Matched files"}
+                          </Button>
+                        </TableCell>
+                      </TableRow>,
+                      ];
+                      if (expandedRecord === record.id) {
+                        const found = evidence[record.id];
+                        rows.push(
+                          <TableRow key={`${record.id}-evidence`} className="bg-muted/20">
+                            <TableCell colSpan={8} className="p-4">
+                              {!found ? (
+                                <p className="text-sm text-muted-foreground">Loading the matched evidence…</p>
+                              ) : (
+                                <div className="space-y-4">
+                                  <div>
+                                    <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                      Attachments behind this row
+                                    </h4>
+                                    {found.attachments.length === 0 ? (
+                                      <p className="mt-2 text-sm text-muted-foreground">
+                                        No attachment is linked to this row — it came from the chat text alone.
+                                      </p>
+                                    ) : (
+                                      <div className="mt-2 flex flex-wrap gap-3">
+                                        {found.attachments.map((file) => (
+                                          <button
+                                            key={file.id}
+                                            type="button"
+                                            onClick={() => void openPreview(file.id)}
+                                            className="w-40 rounded-lg border border-border/60 bg-card/60 p-2 text-left hover:border-primary"
+                                          >
+                                            {file.url && !file.mimeType?.includes("pdf") ? (
+                                              <img
+                                                src={file.url}
+                                                alt={`Matched document ${file.filename}`}
+                                                loading="lazy"
+                                                className="h-24 w-full rounded object-cover"
+                                              />
+                                            ) : (
+                                              <div className="flex h-24 w-full items-center justify-center rounded bg-muted text-xs text-muted-foreground">
+                                                {file.mimeType?.includes("pdf") ? "PDF" : "No preview"}
+                                              </div>
+                                            )}
+                                            <p className="mt-2 truncate font-mono text-[11px]">{file.filename}</p>
+                                            <p className="text-[11px] text-muted-foreground">{file.ocrStatus}</p>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {found.messages.length > 0 ? (
+                                    <div>
+                                      <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                        Chat lines used
+                                      </h4>
+                                      <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-3">
+                                        {found.messages.map((message) => (
+                                          <p key={message.id} className="text-xs text-muted-foreground">
+                                            <span className="font-medium text-foreground">
+                                              {message.sender ?? "Unknown"}
+                                            </span>
+                                            {message.sent_at
+                                              ? ` · ${new Date(message.sent_at).toLocaleString()}`
+                                              : ""}
+                                            {message.body ? ` — ${message.body}` : ""}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>,
+                        );
+                      }
+                      return rows;
+                    })
                   )}
+
                 </TableBody>
               </Table>
             </div>
