@@ -768,3 +768,163 @@ export const rebuildRecords = createServerFn({ method: "POST" })
       flagged: built.filter((record) => record.issues.some((issue) => issue.level === "error")).length,
     };
   });
+
+export const getUnmatchedReport = createServerFn({ method: "POST" })
+  .inputValidator((input: { importId: string }) => ({ importId: String(input.importId) }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    const { data: records } = await supabase
+      .from("request_records")
+      .select("id")
+      .eq("import_id", data.importId);
+    const recordIds = (records ?? []).map((row) => row.id);
+
+    const usedAttachments = new Set<string>();
+    const usedMessages = new Set<string>();
+    for (let index = 0; index < recordIds.length; index += 200) {
+      const slice = recordIds.slice(index, index + 200);
+      const { data: sources } = await supabase
+        .from("record_sources")
+        .select("message_id, attachment_id")
+        .in("record_id", slice);
+      for (const source of sources ?? []) {
+        if (source.attachment_id) usedAttachments.add(source.attachment_id);
+        if (source.message_id) usedMessages.add(source.message_id);
+      }
+    }
+
+    const { data: attachments } = await supabase
+      .from("attachments")
+      .select("id, filename, mime_type, size_bytes, message_seq, ocr_status, ocr_error, extracted")
+      .eq("import_id", data.importId)
+      .order("filename");
+
+    const unmatchedFiles = (attachments ?? [])
+      .filter((row) => !usedAttachments.has(row.id))
+      .map((row) => {
+        const extracted = row.extracted as { doc_type?: string; facility_name?: string | null } | null;
+        let reason: string;
+        if (row.ocr_status === "pending") reason = "Waiting to be read — not cross-referenced yet.";
+        else if (row.ocr_status === "processing") reason = "Still being read.";
+        else if (row.ocr_status === "deferred") reason = "Held back as a large file — read it on the heavy lane.";
+        else if (row.ocr_status === "skipped") reason = "Skipped on purpose.";
+        else if (row.ocr_status === "error") reason = row.ocr_error ?? "Reading failed.";
+        else if (!extracted) reason = "Read, but nothing structured came back.";
+        else if (!extracted.doc_type || extracted.doc_type === "other")
+          reason = "Read, but it is not a request or receipt (classed as other).";
+        else if (!extracted.facility_name)
+          reason = "Read as a document, but no facility name was found to match it to a request.";
+        else reason = "Read, but no ledger row claimed it.";
+        return {
+          id: row.id,
+          filename: row.filename,
+          mimeType: row.mime_type,
+          sizeBytes: row.size_bytes,
+          messageSeq: row.message_seq,
+          status: row.ocr_status,
+          docType: extracted?.doc_type ?? null,
+          reason,
+        };
+      });
+
+    const { data: messages } = await supabase
+      .from("messages")
+      .select("id, seq, sent_at, sender, body, attachment_filename")
+      .eq("import_id", data.importId)
+      .not("attachment_filename", "is", null)
+      .order("seq");
+
+    const knownFiles = new Set((attachments ?? []).map((row) => row.filename));
+    const missingMedia = (messages ?? [])
+      .filter((row) => row.attachment_filename && !knownFiles.has(row.attachment_filename))
+      .slice(0, 500)
+      .map((row) => ({
+        id: row.id,
+        seq: row.seq,
+        sentAt: row.sent_at,
+        sender: row.sender,
+        snippet: (row.body ?? "").slice(0, 200),
+        filename: row.attachment_filename,
+        reason: "The chat mentions this file but it was not in the upload.",
+      }));
+
+    const { data: moneyMessages } = await supabase
+      .from("messages")
+      .select("id, seq, sent_at, sender, body")
+      .eq("import_id", data.importId)
+      .is("attachment_filename", null)
+      .or("body.ilike.%paid%,body.ilike.%payment%,body.ilike.%receipt%,body.ilike.%request%,body.ilike.%transfer%")
+      .order("seq")
+      .limit(500);
+
+    const unmatchedMessages = (moneyMessages ?? [])
+      .filter((row) => !usedMessages.has(row.id))
+      .map((row) => ({
+        id: row.id,
+        seq: row.seq,
+        sentAt: row.sent_at,
+        sender: row.sender,
+        snippet: (row.body ?? "").slice(0, 240),
+        filename: null as string | null,
+        reason: "Mentions a request or payment but is not attached to any ledger row.",
+      }));
+
+    return {
+      unmatchedFiles,
+      unmatchedMessages: [...missingMedia, ...unmatchedMessages].sort((a, b) => a.seq - b.seq),
+      totalFiles: attachments?.length ?? 0,
+      totalRecords: recordIds.length,
+    };
+  });
+
+export const getRecordEvidence = createServerFn({ method: "POST" })
+  .inputValidator((input: { recordId: string }) => ({ recordId: String(input.recordId) }))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
+
+    const { data: sources } = await supabase
+      .from("record_sources")
+      .select("kind, message_id, attachment_id")
+      .eq("record_id", data.recordId);
+
+    const attachmentIds = (sources ?? []).map((s) => s.attachment_id).filter((v): v is string => !!v);
+    const messageIds = (sources ?? []).map((s) => s.message_id).filter((v): v is string => !!v);
+
+    const attachments: {
+      id: string;
+      filename: string;
+      mimeType: string | null;
+      ocrStatus: string;
+      url: string | null;
+    }[] = [];
+
+    if (attachmentIds.length) {
+      const { data: rows } = await supabase
+        .from("attachments")
+        .select("id, filename, mime_type, storage_path, ocr_status")
+        .in("id", attachmentIds);
+      for (const row of rows ?? []) {
+        const { data: signed } = await supabase.storage
+          .from("wa-archive")
+          .createSignedUrl(row.storage_path, 900);
+        attachments.push({
+          id: row.id,
+          filename: row.filename,
+          mimeType: row.mime_type,
+          ocrStatus: row.ocr_status,
+          url: signed?.signedUrl ?? null,
+        });
+      }
+    }
+
+    const { data: messageRows } = messageIds.length
+      ? await supabase
+          .from("messages")
+          .select("id, seq, sent_at, sender, body")
+          .in("id", messageIds)
+          .order("seq")
+      : { data: [] as { id: string; seq: number; sent_at: string | null; sender: string | null; body: string | null }[] };
+
+    return { attachments, messages: messageRows ?? [] };
+  });
