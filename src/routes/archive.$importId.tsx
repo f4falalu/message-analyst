@@ -907,9 +907,13 @@ function ArchivePage() {
         <Tabs defaultValue="records">
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
+            <TabsTrigger value="unmatched" onClick={() => { if (!report) void loadReport(); }}>
+              Unmatched
+            </TabsTrigger>
             <TabsTrigger value="files">Files</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
             <TabsTrigger value="log">Run log</TabsTrigger>
+
           </TabsList>
 
           <TabsContent value="files" className="mt-6 space-y-4">
