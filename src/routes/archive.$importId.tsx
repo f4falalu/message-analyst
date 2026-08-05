@@ -1293,7 +1293,134 @@ function ArchivePage() {
             </div>
           </TabsContent>
 
+          <TabsContent value="unmatched" className="mt-6 space-y-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={() => void loadReport()} disabled={reportLoading}>
+                {reportLoading ? "Checking…" : "Refresh report"}
+              </Button>
+              {report ? (
+                <span className="text-sm text-muted-foreground">
+                  {report.unmatchedFiles.length.toLocaleString()} file(s) and{" "}
+                  {report.unmatchedMessages.length.toLocaleString()} message(s) are not behind any ledger row ·{" "}
+                  {report.totalRecords.toLocaleString()} rows built from {report.totalFiles.toLocaleString()} files
+                </span>
+              ) : null}
+            </div>
+
+            {!report ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                {reportLoading ? "Working out what didn't match…" : "Run the report to see what didn't match."}
+              </p>
+            ) : (
+              <>
+                <div>
+                  <h3 className="mb-2 font-serif text-lg text-foreground">Files with no ledger row</h3>
+                  <div className="overflow-x-auto rounded-xl border border-border/60">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-64">File</TableHead>
+                          <TableHead>State</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="min-w-72">Why it didn&apos;t match</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {report.unmatchedFiles.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                              Every file is accounted for in the ledger.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          report.unmatchedFiles.map((file) => (
+                            <TableRow key={file.id}>
+                              <TableCell>
+                                <button
+                                  type="button"
+                                  className="text-left font-mono text-xs underline decoration-dotted underline-offset-4"
+                                  onClick={() => void openPreview(file.id)}
+                                >
+                                  {file.filename}
+                                </button>
+                                <p className="text-xs text-muted-foreground">
+                                  {file.mimeType ?? "unknown type"}
+                                  {file.sizeBytes ? ` · ${(file.sizeBytes / 1024).toFixed(0)} KB` : ""}
+                                  {file.messageSeq != null ? ` · message #${file.messageSeq}` : ""}
+                                </p>
+                              </TableCell>
+                              <TableCell className="capitalize">{file.status}</TableCell>
+                              <TableCell className="text-sm">{file.docType ?? "—"}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{file.reason}</TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={rowBusy === file.id}
+                                  onClick={() => void requeueOne(file.id)}
+                                >
+                                  Queue again
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 font-serif text-lg text-foreground">Messages with no ledger row</h3>
+                  <div className="overflow-x-auto rounded-xl border border-border/60">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>#</TableHead>
+                          <TableHead>When</TableHead>
+                          <TableHead>Sender</TableHead>
+                          <TableHead className="min-w-96">Original snippet</TableHead>
+                          <TableHead className="min-w-64">Why it didn&apos;t match</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {report.unmatchedMessages.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                              No leftover request or payment messages.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          report.unmatchedMessages.map((message) => (
+                            <TableRow key={message.id} className="align-top">
+                              <TableCell className="text-xs text-muted-foreground">{message.seq}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {message.sentAt ? new Date(message.sentAt).toLocaleString() : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{message.sender ?? "system"}</TableCell>
+                              <TableCell className="whitespace-pre-wrap text-sm text-foreground">
+                                {message.filename ? (
+                                  <span className="mr-2 font-mono text-xs text-muted-foreground">
+                                    📎 {message.filename}
+                                  </span>
+                                ) : null}
+                                {message.snippet || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{message.reason}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </>
+            )}
+          </TabsContent>
+
           <TabsContent value="messages" className="mt-6 space-y-4">
+
             <div className="flex flex-wrap gap-3">
               <Input
                 placeholder="Search the conversation…"
