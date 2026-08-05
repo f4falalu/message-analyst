@@ -14,7 +14,10 @@ import {
   listImportFiles,
   requeueAttachments,
   setAttachmentSkipped,
+  getUnmatchedReport,
+  getRecordEvidence,
 } from "@/lib/processing.functions";
+
 
 
 import type { Issue } from "@/lib/data-rules";
@@ -215,6 +218,18 @@ function ArchivePage() {
   const [building, setBuilding] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [facilityFilter, setFacilityFilter] = useState("");
+  const [contactFilter, setContactFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<Record<string, RecordEvidence>>({});
+  const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
+  const [report, setReport] = useState<UnmatchedReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const fetchReport = useServerFn(getUnmatchedReport);
+  const fetchEvidence = useServerFn(getRecordEvidence);
+
 
   const [concurrency, setConcurrency] = useState("4");
   const [chunkSize, setChunkSize] = useState("3");
