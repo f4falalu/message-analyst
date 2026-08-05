@@ -1079,10 +1079,55 @@ function ArchivePage() {
                   <SelectItem value="review">Needs review</SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Facility…"
+                value={facilityFilter}
+                onChange={(event) => setFacilityFilter(event.target.value)}
+                className="max-w-[12rem]"
+              />
+              <Input
+                placeholder="Contact name or phone…"
+                value={contactFilter}
+                onChange={(event) => setContactFilter(event.target.value)}
+                className="max-w-[14rem]"
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">From</span>
+                <Input
+                  type="date"
+                  value={fromDate}
+                  onChange={(event) => setFromDate(event.target.value)}
+                  className="w-[10rem]"
+                />
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">To</span>
+                <Input
+                  type="date"
+                  value={toDate}
+                  onChange={(event) => setToDate(event.target.value)}
+                  className="w-[10rem]"
+                />
+              </div>
+              {query || facilityFilter || contactFilter || fromDate || toDate || statusFilter !== "all" ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setQuery("");
+                    setFacilityFilter("");
+                    setContactFilter("");
+                    setFromDate("");
+                    setToDate("");
+                    setStatusFilter("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : null}
               <span className="text-sm text-muted-foreground">
-                {filtered.length.toLocaleString()} records · {formatMoney(totalPaid, filtered[0]?.currency ?? null)} recorded
+                {filtered.length.toLocaleString()} of {records.length.toLocaleString()} records ·{" "}
+                {formatMoney(totalPaid, filtered[0]?.currency ?? null)} recorded
               </span>
             </div>
+
 
             <div className="overflow-x-auto rounded-xl border border-border/60">
               <Table>
