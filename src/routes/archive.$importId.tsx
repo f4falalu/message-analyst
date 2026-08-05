@@ -14,7 +14,10 @@ import {
   listImportFiles,
   requeueAttachments,
   setAttachmentSkipped,
+  getUnmatchedReport,
+  getRecordEvidence,
 } from "@/lib/processing.functions";
+
 
 
 import type { Issue } from "@/lib/data-rules";
@@ -80,7 +83,37 @@ type Counts = { pending: number; done: number; error: number; skipped: number; d
 /** Files at or above this size are read alone on the heavy lane. */
 const HEAVY_FILE_BYTES = 4 * 1024 * 1024;
 
+type RecordEvidence = {
+  attachments: { id: string; filename: string; mimeType: string | null; ocrStatus: string; url: string | null }[];
+  messages: { id: string; seq: number; sent_at: string | null; sender: string | null; body: string | null }[];
+};
+
+type UnmatchedReport = {
+  unmatchedFiles: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    messageSeq: number | null;
+    status: string;
+    docType: string | null;
+    reason: string;
+  }[];
+  unmatchedMessages: {
+    id: string;
+    seq: number;
+    sentAt: string | null;
+    sender: string | null;
+    snippet: string;
+    filename: string | null;
+    reason: string;
+  }[];
+  totalFiles: number;
+  totalRecords: number;
+};
+
 type FileRow = {
+
   id: string;
   filename: string;
   mime_type: string | null;
@@ -215,6 +248,18 @@ function ArchivePage() {
   const [building, setBuilding] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [facilityFilter, setFacilityFilter] = useState("");
+  const [contactFilter, setContactFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<Record<string, RecordEvidence>>({});
+  const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
+  const [report, setReport] = useState<UnmatchedReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const fetchReport = useServerFn(getUnmatchedReport);
+  const fetchEvidence = useServerFn(getRecordEvidence);
+
 
   const [concurrency, setConcurrency] = useState("4");
   const [chunkSize, setChunkSize] = useState("3");
@@ -611,12 +656,55 @@ function ArchivePage() {
     }
   };
 
+  const loadReport = useCallback(async () => {
+    setReportLoading(true);
+    try {
+      const result = await fetchReport({ data: { importId } });
+      setReport(result as UnmatchedReport);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not build the report.");
+    } finally {
+      setReportLoading(false);
+    }
+  }, [fetchReport, importId]);
+
+  const toggleEvidence = async (recordId: string) => {
+    if (expandedRecord === recordId) {
+      setExpandedRecord(null);
+      return;
+    }
+    setExpandedRecord(recordId);
+    if (evidence[recordId]) return;
+    setEvidenceLoading(recordId);
+    try {
+      const result = await fetchEvidence({ data: { recordId } });
+      setEvidence((current) => ({ ...current, [recordId]: result as RecordEvidence }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load the matched files.");
+    } finally {
+      setEvidenceLoading(null);
+    }
+  };
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    const facilityNeedle = facilityFilter.trim().toLowerCase();
+    const contactNeedle = contactFilter.trim().toLowerCase();
     return records.filter((record) => {
       if (statusFilter === "review" && !record.needs_review) return false;
       if (statusFilter === "paid" && record.status !== "paid") return false;
       if (statusFilter === "unpaid" && record.payment_date) return false;
+      if (facilityNeedle && !(record.facility_name ?? "").toLowerCase().includes(facilityNeedle)) return false;
+      if (contactNeedle) {
+        const contact = `${record.requester_name ?? ""} ${record.requester_phone ?? ""}`.toLowerCase();
+        if (!contact.includes(contactNeedle)) return false;
+      }
+      if (fromDate || toDate) {
+        const stamp = record.request_date ?? record.payment_date;
+        if (!stamp) return false;
+        if (fromDate && stamp < fromDate) return false;
+        if (toDate && stamp > toDate) return false;
+      }
       if (!needle) return true;
       const haystack = [
         record.facility_name,
@@ -630,7 +718,8 @@ function ArchivePage() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [records, query, statusFilter]);
+  }, [records, query, statusFilter, facilityFilter, contactFilter, fromDate, toDate]);
+
 
   const activeRun = useMemo(() => runs.find((run) => run.id === activeRunId) ?? null, [runs, activeRunId]);
 
@@ -818,9 +907,13 @@ function ArchivePage() {
         <Tabs defaultValue="records">
           <TabsList>
             <TabsTrigger value="records">Ledger</TabsTrigger>
+            <TabsTrigger value="unmatched" onClick={() => { if (!report) void loadReport(); }}>
+              Unmatched
+            </TabsTrigger>
             <TabsTrigger value="files">Files</TabsTrigger>
             <TabsTrigger value="messages">Conversation</TabsTrigger>
             <TabsTrigger value="log">Run log</TabsTrigger>
+
           </TabsList>
 
           <TabsContent value="files" className="mt-6 space-y-4">
@@ -990,10 +1083,55 @@ function ArchivePage() {
                   <SelectItem value="review">Needs review</SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Facility…"
+                value={facilityFilter}
+                onChange={(event) => setFacilityFilter(event.target.value)}
+                className="max-w-[12rem]"
+              />
+              <Input
+                placeholder="Contact name or phone…"
+                value={contactFilter}
+                onChange={(event) => setContactFilter(event.target.value)}
+                className="max-w-[14rem]"
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">From</span>
+                <Input
+                  type="date"
+                  value={fromDate}
+                  onChange={(event) => setFromDate(event.target.value)}
+                  className="w-[10rem]"
+                />
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">To</span>
+                <Input
+                  type="date"
+                  value={toDate}
+                  onChange={(event) => setToDate(event.target.value)}
+                  className="w-[10rem]"
+                />
+              </div>
+              {query || facilityFilter || contactFilter || fromDate || toDate || statusFilter !== "all" ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setQuery("");
+                    setFacilityFilter("");
+                    setContactFilter("");
+                    setFromDate("");
+                    setToDate("");
+                    setStatusFilter("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : null}
               <span className="text-sm text-muted-foreground">
-                {filtered.length.toLocaleString()} records · {formatMoney(totalPaid, filtered[0]?.currency ?? null)} recorded
+                {filtered.length.toLocaleString()} of {records.length.toLocaleString()} records ·{" "}
+                {formatMoney(totalPaid, filtered[0]?.currency ?? null)} recorded
               </span>
             </div>
+
 
             <div className="overflow-x-auto rounded-xl border border-border/60">
               <Table>
@@ -1006,17 +1144,19 @@ function ArchivePage() {
                     <TableHead>Paid</TableHead>
                     <TableHead className="min-w-40">Contact</TableHead>
                     <TableHead>Flags</TableHead>
+                    <TableHead className="text-right">Evidence</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-16 text-center text-sm text-muted-foreground">
-                        No records yet. Read the documents, then build the ledger.
+                      <TableCell colSpan={8} className="py-16 text-center text-sm text-muted-foreground">
+                        No records match. Read the documents, build the ledger, or relax the filters.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map((record) => (
+                    filtered.flatMap((record) => {
+                      const rows = [
                       <TableRow key={record.id} className="align-top">
                         <TableCell className="font-medium">{record.facility_name ?? "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">
@@ -1057,15 +1197,230 @@ function ArchivePage() {
                             ))}
                           </div>
                         </TableCell>
-                      </TableRow>
-                    ))
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={evidenceLoading === record.id}
+                            onClick={() => void toggleEvidence(record.id)}
+                          >
+                            {evidenceLoading === record.id
+                              ? "Loading…"
+                              : expandedRecord === record.id
+                                ? "Hide files"
+                                : "Matched files"}
+                          </Button>
+                        </TableCell>
+                      </TableRow>,
+                      ];
+                      if (expandedRecord === record.id) {
+                        const found = evidence[record.id];
+                        rows.push(
+                          <TableRow key={`${record.id}-evidence`} className="bg-muted/20">
+                            <TableCell colSpan={8} className="p-4">
+                              {!found ? (
+                                <p className="text-sm text-muted-foreground">Loading the matched evidence…</p>
+                              ) : (
+                                <div className="space-y-4">
+                                  <div>
+                                    <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                      Attachments behind this row
+                                    </h4>
+                                    {found.attachments.length === 0 ? (
+                                      <p className="mt-2 text-sm text-muted-foreground">
+                                        No attachment is linked to this row — it came from the chat text alone.
+                                      </p>
+                                    ) : (
+                                      <div className="mt-2 flex flex-wrap gap-3">
+                                        {found.attachments.map((file) => (
+                                          <button
+                                            key={file.id}
+                                            type="button"
+                                            onClick={() => void openPreview(file.id)}
+                                            className="w-40 rounded-lg border border-border/60 bg-card/60 p-2 text-left hover:border-primary"
+                                          >
+                                            {file.url && !file.mimeType?.includes("pdf") ? (
+                                              <img
+                                                src={file.url}
+                                                alt={`Matched document ${file.filename}`}
+                                                loading="lazy"
+                                                className="h-24 w-full rounded object-cover"
+                                              />
+                                            ) : (
+                                              <div className="flex h-24 w-full items-center justify-center rounded bg-muted text-xs text-muted-foreground">
+                                                {file.mimeType?.includes("pdf") ? "PDF" : "No preview"}
+                                              </div>
+                                            )}
+                                            <p className="mt-2 truncate font-mono text-[11px]">{file.filename}</p>
+                                            <p className="text-[11px] text-muted-foreground">{file.ocrStatus}</p>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {found.messages.length > 0 ? (
+                                    <div>
+                                      <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                        Chat lines used
+                                      </h4>
+                                      <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-3">
+                                        {found.messages.map((message) => (
+                                          <p key={message.id} className="text-xs text-muted-foreground">
+                                            <span className="font-medium text-foreground">
+                                              {message.sender ?? "Unknown"}
+                                            </span>
+                                            {message.sent_at
+                                              ? ` · ${new Date(message.sent_at).toLocaleString()}`
+                                              : ""}
+                                            {message.body ? ` — ${message.body}` : ""}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>,
+                        );
+                      }
+                      return rows;
+                    })
                   )}
+
                 </TableBody>
               </Table>
             </div>
           </TabsContent>
 
+          <TabsContent value="unmatched" className="mt-6 space-y-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={() => void loadReport()} disabled={reportLoading}>
+                {reportLoading ? "Checking…" : "Refresh report"}
+              </Button>
+              {report ? (
+                <span className="text-sm text-muted-foreground">
+                  {report.unmatchedFiles.length.toLocaleString()} file(s) and{" "}
+                  {report.unmatchedMessages.length.toLocaleString()} message(s) are not behind any ledger row ·{" "}
+                  {report.totalRecords.toLocaleString()} rows built from {report.totalFiles.toLocaleString()} files
+                </span>
+              ) : null}
+            </div>
+
+            {!report ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                {reportLoading ? "Working out what didn't match…" : "Run the report to see what didn't match."}
+              </p>
+            ) : (
+              <>
+                <div>
+                  <h3 className="mb-2 font-serif text-lg text-foreground">Files with no ledger row</h3>
+                  <div className="overflow-x-auto rounded-xl border border-border/60">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-64">File</TableHead>
+                          <TableHead>State</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="min-w-72">Why it didn&apos;t match</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {report.unmatchedFiles.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                              Every file is accounted for in the ledger.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          report.unmatchedFiles.map((file) => (
+                            <TableRow key={file.id}>
+                              <TableCell>
+                                <button
+                                  type="button"
+                                  className="text-left font-mono text-xs underline decoration-dotted underline-offset-4"
+                                  onClick={() => void openPreview(file.id)}
+                                >
+                                  {file.filename}
+                                </button>
+                                <p className="text-xs text-muted-foreground">
+                                  {file.mimeType ?? "unknown type"}
+                                  {file.sizeBytes ? ` · ${(file.sizeBytes / 1024).toFixed(0)} KB` : ""}
+                                  {file.messageSeq != null ? ` · message #${file.messageSeq}` : ""}
+                                </p>
+                              </TableCell>
+                              <TableCell className="capitalize">{file.status}</TableCell>
+                              <TableCell className="text-sm">{file.docType ?? "—"}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{file.reason}</TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={rowBusy === file.id}
+                                  onClick={() => void requeueOne(file.id)}
+                                >
+                                  Queue again
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 font-serif text-lg text-foreground">Messages with no ledger row</h3>
+                  <div className="overflow-x-auto rounded-xl border border-border/60">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>#</TableHead>
+                          <TableHead>When</TableHead>
+                          <TableHead>Sender</TableHead>
+                          <TableHead className="min-w-96">Original snippet</TableHead>
+                          <TableHead className="min-w-64">Why it didn&apos;t match</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {report.unmatchedMessages.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                              No leftover request or payment messages.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          report.unmatchedMessages.map((message) => (
+                            <TableRow key={message.id} className="align-top">
+                              <TableCell className="text-xs text-muted-foreground">{message.seq}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {message.sentAt ? new Date(message.sentAt).toLocaleString() : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{message.sender ?? "system"}</TableCell>
+                              <TableCell className="whitespace-pre-wrap text-sm text-foreground">
+                                {message.filename ? (
+                                  <span className="mr-2 font-mono text-xs text-muted-foreground">
+                                    📎 {message.filename}
+                                  </span>
+                                ) : null}
+                                {message.snippet || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{message.reason}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </>
+            )}
+          </TabsContent>
+
           <TabsContent value="messages" className="mt-6 space-y-4">
+
             <div className="flex flex-wrap gap-3">
               <Input
                 placeholder="Search the conversation…"
