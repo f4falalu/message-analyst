@@ -656,12 +656,55 @@ function ArchivePage() {
     }
   };
 
+  const loadReport = useCallback(async () => {
+    setReportLoading(true);
+    try {
+      const result = await fetchReport({ data: { importId } });
+      setReport(result as UnmatchedReport);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not build the report.");
+    } finally {
+      setReportLoading(false);
+    }
+  }, [fetchReport, importId]);
+
+  const toggleEvidence = async (recordId: string) => {
+    if (expandedRecord === recordId) {
+      setExpandedRecord(null);
+      return;
+    }
+    setExpandedRecord(recordId);
+    if (evidence[recordId]) return;
+    setEvidenceLoading(recordId);
+    try {
+      const result = await fetchEvidence({ data: { recordId } });
+      setEvidence((current) => ({ ...current, [recordId]: result as RecordEvidence }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load the matched files.");
+    } finally {
+      setEvidenceLoading(null);
+    }
+  };
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    const facilityNeedle = facilityFilter.trim().toLowerCase();
+    const contactNeedle = contactFilter.trim().toLowerCase();
     return records.filter((record) => {
       if (statusFilter === "review" && !record.needs_review) return false;
       if (statusFilter === "paid" && record.status !== "paid") return false;
       if (statusFilter === "unpaid" && record.payment_date) return false;
+      if (facilityNeedle && !(record.facility_name ?? "").toLowerCase().includes(facilityNeedle)) return false;
+      if (contactNeedle) {
+        const contact = `${record.requester_name ?? ""} ${record.requester_phone ?? ""}`.toLowerCase();
+        if (!contact.includes(contactNeedle)) return false;
+      }
+      if (fromDate || toDate) {
+        const stamp = record.request_date ?? record.payment_date;
+        if (!stamp) return false;
+        if (fromDate && stamp < fromDate) return false;
+        if (toDate && stamp > toDate) return false;
+      }
       if (!needle) return true;
       const haystack = [
         record.facility_name,
@@ -675,7 +718,8 @@ function ArchivePage() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [records, query, statusFilter]);
+  }, [records, query, statusFilter, facilityFilter, contactFilter, fromDate, toDate]);
+
 
   const activeRun = useMemo(() => runs.find((run) => run.id === activeRunId) ?? null, [runs, activeRunId]);
 
