@@ -83,7 +83,37 @@ type Counts = { pending: number; done: number; error: number; skipped: number; d
 /** Files at or above this size are read alone on the heavy lane. */
 const HEAVY_FILE_BYTES = 4 * 1024 * 1024;
 
+type RecordEvidence = {
+  attachments: { id: string; filename: string; mimeType: string | null; ocrStatus: string; url: string | null }[];
+  messages: { id: string; seq: number; sent_at: string | null; sender: string | null; body: string | null }[];
+};
+
+type UnmatchedReport = {
+  unmatchedFiles: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    messageSeq: number | null;
+    status: string;
+    docType: string | null;
+    reason: string;
+  }[];
+  unmatchedMessages: {
+    id: string;
+    seq: number;
+    sentAt: string | null;
+    sender: string | null;
+    snippet: string;
+    filename: string | null;
+    reason: string;
+  }[];
+  totalFiles: number;
+  totalRecords: number;
+};
+
 type FileRow = {
+
   id: string;
   filename: string;
   mime_type: string | null;
