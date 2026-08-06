@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_providers: {
+        Row: {
+          api_key: string | null
+          auth_style: string
+          base_url: string
+          created_at: string
+          id: string
+          is_active: boolean
+          label: string
+          model: string
+          notes: string | null
+          supports_pdf: boolean
+          updated_at: string
+        }
+        Insert: {
+          api_key?: string | null
+          auth_style?: string
+          base_url: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label: string
+          model: string
+          notes?: string | null
+          supports_pdf?: boolean
+          updated_at?: string
+        }
+        Update: {
+          api_key?: string | null
+          auth_style?: string
+          base_url?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          model?: string
+          notes?: string | null
+          supports_pdf?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       attachments: {
         Row: {
           created_at: string
