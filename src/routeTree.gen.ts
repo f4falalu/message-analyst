@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MappingsRouteImport } from './routes/mappings'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as ModelsRouteImport } from './routes/models'
 import { Route as Char91DotmcpChar93ListToolsRouteImport } from './routes/[.mcp]/list-tools'
 import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } from './routes/[.well-known]/oauth-protected-resource'
 import { Route as ArchiveImportIdRouteImport } from './routes/archive.$importId'
@@ -30,6 +31,11 @@ const MappingsRoute = MappingsRouteImport.update({
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModelsRoute = ModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
   getParentRoute: () => rootRouteImport,
 } as any)
 const Char91DotmcpChar93ListToolsRoute =
@@ -60,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/mappings': typeof MappingsRoute
   '/mcp': typeof McpRoute
+  '/models': typeof ModelsRoute
   '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
   '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
@@ -69,6 +76,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/mappings': typeof MappingsRoute
   '/mcp': typeof McpRoute
+  '/models': typeof ModelsRoute
   '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
   '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
@@ -79,6 +87,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/mappings': typeof MappingsRoute
   '/mcp': typeof McpRoute
+  '/models': typeof ModelsRoute
   '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
   '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/archive/$importId': typeof ArchiveImportIdRoute
@@ -90,6 +99,7 @@ export interface FileRouteTypes {
     | '/'
     | '/mappings'
     | '/mcp'
+    | '/models'
     | '/.mcp/list-tools'
     | '/.well-known/oauth-protected-resource'
     | '/archive/$importId'
@@ -99,6 +109,7 @@ export interface FileRouteTypes {
     | '/'
     | '/mappings'
     | '/mcp'
+    | '/models'
     | '/.mcp/list-tools'
     | '/.well-known/oauth-protected-resource'
     | '/archive/$importId'
@@ -108,6 +119,7 @@ export interface FileRouteTypes {
     | '/'
     | '/mappings'
     | '/mcp'
+    | '/models'
     | '/.mcp/list-tools'
     | '/.well-known/oauth-protected-resource'
     | '/archive/$importId'
@@ -118,6 +130,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   MappingsRoute: typeof MappingsRoute
   McpRoute: typeof McpRoute
+  ModelsRoute: typeof ModelsRoute
   Char91DotmcpChar93ListToolsRoute: typeof Char91DotmcpChar93ListToolsRoute
   Char91DotwellKnownChar93OauthProtectedResourceRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   ArchiveImportIdRoute: typeof ArchiveImportIdRoute
@@ -145,6 +158,13 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/models': {
+      id: '/models'
+      path: '/models'
+      fullPath: '/models'
+      preLoaderRoute: typeof ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/.mcp/list-tools': {
@@ -182,6 +202,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   MappingsRoute: MappingsRoute,
   McpRoute: McpRoute,
+  ModelsRoute: ModelsRoute,
   Char91DotmcpChar93ListToolsRoute: Char91DotmcpChar93ListToolsRoute,
   Char91DotwellKnownChar93OauthProtectedResourceRoute:
     Char91DotwellKnownChar93OauthProtectedResourceRoute,
