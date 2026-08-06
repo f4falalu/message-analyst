@@ -81,7 +81,15 @@ export const saveAiProvider = createServerFn({ method: "POST" })
     }
 
     if (data.id) {
-      const patch: Record<string, unknown> = {
+      const patch: {
+        label: string;
+        base_url: string;
+        model: string;
+        auth_style: string;
+        supports_pdf: boolean;
+        notes: string | null;
+        api_key?: string;
+      } = {
         label: data.label,
         base_url: data.baseUrl,
         model: data.model,
@@ -90,7 +98,7 @@ export const saveAiProvider = createServerFn({ method: "POST" })
         notes: data.notes,
       };
       // An empty key field means "keep the saved key".
-      if (data.apiKey) patch["api_key"] = data.apiKey;
+      if (data.apiKey) patch.api_key = data.apiKey;
       const { error } = await supabase.from("ai_providers").update(patch).eq("id", data.id);
       if (error) throw new Error(error.message);
       return { id: data.id };
