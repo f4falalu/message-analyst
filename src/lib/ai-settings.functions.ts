@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { ProviderConfig } from "./ai-provider.server";
 
 export type ProviderSummary = {
   id: string;
@@ -146,7 +147,7 @@ export const testAiProvider = createServerFn({ method: "POST" })
   .inputValidator((input: { id?: string | null }) => ({ id: input.id ? String(input.id) : null }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
-    const { lovableProvider, providerHeaders, type ProviderConfig } = await import("./ai-provider.server");
+    const { lovableProvider, providerHeaders } = await import("./ai-provider.server");
 
     let provider: ProviderConfig;
     if (data.id) {
