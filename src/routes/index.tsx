@@ -421,6 +421,9 @@ function Home() {
             <Link to="/mappings" className="text-sm text-muted-foreground hover:text-foreground">
               Name mappings
             </Link>
+            <Link to="/models" className="text-sm text-muted-foreground hover:text-foreground">
+              AI models
+            </Link>
             <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Internal tool</span>
           </div>
         </div>
