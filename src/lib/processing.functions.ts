@@ -106,8 +106,8 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
-    const apiKey = process.env["LOVABLE_API_KEY"];
-    if (!apiKey) throw new Error("AI is not configured for this project.");
+    const { resolveAiProvider } = await import("./ai-provider.server");
+    const provider = await resolveAiProvider(supabase as never);
 
     // Atomic claim: safe when several batches run at the same time.
     const claimArgs: { _import_id: string; _limit: number; _min_bytes?: number; _max_bytes?: number } = {
@@ -211,7 +211,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             attempts = attempt;
             try {
               extracted = await readDocument({
-                apiKey,
+                provider,
                 mimeType: attachment.mime_type ?? "application/octet-stream",
                 filename: attachment.filename,
                 signedUrl: signed.signedUrl,
@@ -341,8 +341,8 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
-    const apiKey = process.env["LOVABLE_API_KEY"];
-    if (!apiKey) throw new Error("AI is not configured for this project.");
+    const { resolveAiProvider } = await import("./ai-provider.server");
+    const provider = await resolveAiProvider(supabase as never);
 
     const { data: attachment, error } = await supabase
       .from("attachments")
@@ -375,7 +375,7 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
       }
 
       const extracted = await readDocument({
-        apiKey,
+        provider,
         mimeType: attachment.mime_type ?? "application/octet-stream",
         filename: attachment.filename,
         signedUrl: signed.signedUrl,
