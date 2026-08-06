@@ -1,7 +1,6 @@
 // Server-only helpers for reading request/receipt documents with Lovable AI.
 
-const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const MODEL = "google/gemini-3.6-flash";
+import { providerHeaders, type ProviderConfig } from "./ai-provider.server";
 
 /** How large an inlined PDF may be. Heavy files are read one at a time. */
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -166,13 +165,18 @@ function parseJsonLoose(text: string): unknown {
 }
 
 export async function readDocument(params: {
-  apiKey: string;
+  provider: ProviderConfig;
   mimeType: string;
   filename: string;
   signedUrl: string;
   chatContext: string;
 }): Promise<ExtractedDoc> {
   const isPdf = params.mimeType === "application/pdf";
+  if (isPdf && !params.provider.supportsPdf) {
+    throw new DeferError(
+      `"${params.provider.label}" is set up for images only, so this PDF has not been read yet. Switch to a PDF-capable model and queue it again.`,
+    );
+  }
 
   let mediaBlock: Record<string, unknown>;
   if (isPdf) {
@@ -210,14 +214,11 @@ export async function readDocument(params: {
     ? `Surrounding WhatsApp conversation (context only — the document itself is authoritative):\n${params.chatContext}\n\nRead the attached document.`
     : "Read the attached document.";
 
-  const response = await fetch(GATEWAY_URL, {
+  const response = await fetch(`${params.provider.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": params.apiKey,
-    },
+    headers: providerHeaders(params.provider),
     body: JSON.stringify({
-      model: MODEL,
+      model: params.provider.model,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: [{ type: "text", text: userText }, mediaBlock] },
