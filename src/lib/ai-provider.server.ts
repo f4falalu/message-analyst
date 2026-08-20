@@ -103,7 +103,7 @@ export async function resolveAiProvider(supabase: {
 }): Promise<ProviderConfig> {
   const { data } = await supabase
     .from("ai_providers")
-    .select("id, label, base_url, model, api_key, auth_style, supports_pdf")
+    .select("id, label, base_url, model, fallback_models, api_key, auth_style, supports_pdf")
     .eq("is_active", true)
     .maybeSingle();
 
