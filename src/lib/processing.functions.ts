@@ -412,10 +412,17 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           field_confidence: extracted.field_confidence as unknown as Json,
           duration_ms: Date.now() - startedAt,
           error: "Manual reprocess",
+          model: extracted.usedModel ?? provider.model,
         });
       }
 
-      return { ok: true, filename: attachment.filename, confidence: extracted.confidence, error: null as string | null };
+      return {
+        ok: true,
+        filename: attachment.filename,
+        confidence: extracted.confidence,
+        model: extracted.usedModel ?? provider.model,
+        error: null as string | null,
+      };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       const isDeferred = caught instanceof DeferError || (caught as { deferred?: boolean })?.deferred === true;
