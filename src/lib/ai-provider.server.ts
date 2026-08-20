@@ -57,6 +57,7 @@ export function lovableProvider(apiKey: string): ProviderConfig {
     label: "Lovable AI (credits)",
     baseUrl: LOVABLE_BASE_URL,
     model: LOVABLE_DEFAULT_MODEL,
+    models: [LOVABLE_DEFAULT_MODEL],
     apiKey,
     authStyle: "lovable",
     supportsPdf: true,
