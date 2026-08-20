@@ -79,6 +79,11 @@ export const saveAiProvider = createServerFn({ method: "POST" })
     if (!data.label || !data.baseUrl || !data.model) {
       throw new Error("Give the model a name, a base URL and a model id.");
     }
+    if (!/^https?:\/\/[^\s]+$/i.test(data.baseUrl)) {
+      throw new Error(
+        `"${data.baseUrl}" is not a valid base URL. It must start with https:// — e.g. https://openrouter.ai/api/v1`,
+      );
+    }
 
     if (data.id) {
       const patch: {
