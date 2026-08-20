@@ -225,8 +225,12 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               break;
             } catch (readError) {
               const text = readError instanceof Error ? readError.message : String(readError);
+              // readDocument already tried every configured model. Return a
+              // rate-limited file to the queue and let the lane honour the
+              // provider delay; keeping this server request open just repeats
+              // the same exhausted list and risks a platform timeout.
+              if (readError instanceof AiRequestError && readError.rateLimited) throw readError;
               const transient =
-                (readError instanceof AiRequestError && readError.rateLimited) ||
                 text.includes("[429]") ||
                 text.includes("[500]") ||
                 text.includes("[502]") ||
@@ -235,10 +239,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
                 /fetch failed|network|timeout|aborted/i.test(text);
               if (!transient || attempt === 3) throw readError;
               lastTransient = text;
-               const waitMs = readError instanceof AiRequestError && readError.rateLimited
-                 ? Math.min(readError.retryAfterMs, 30_000)
-                 : attempt * 2500;
-               await new Promise((resolve) => setTimeout(resolve, waitMs));
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
             }
           }
           if (!extracted) throw new Error(lastTransient || "The document could not be read.");
