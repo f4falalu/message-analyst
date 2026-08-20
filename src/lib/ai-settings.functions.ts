@@ -186,6 +186,15 @@ export const testAiProvider = createServerFn({ method: "POST" })
       provider = lovableProvider(key);
     }
 
+    if (!/^https?:\/\/[^\s]+$/i.test(provider.baseUrl)) {
+      throw new Error(
+        `The saved base URL ("${provider.baseUrl}") is not a web address. Edit this model and set it to your provider's endpoint, e.g. https://openrouter.ai/api/v1`,
+      );
+    }
+    if (provider.authStyle !== "none" && !provider.apiKey) {
+      throw new Error("No API key is saved for this model. Edit it and paste your key.");
+    }
+
     const started = Date.now();
     try {
       const res = await fetch(`${provider.baseUrl}/chat/completions`, {
