@@ -79,6 +79,11 @@ export const saveAiProvider = createServerFn({ method: "POST" })
     if (!data.label || !data.baseUrl || !data.model) {
       throw new Error("Give the model a name, a base URL and a model id.");
     }
+    if (!/^https?:\/\/[^\s]+$/i.test(data.baseUrl)) {
+      throw new Error(
+        `"${data.baseUrl}" is not a valid base URL. It must start with https:// — e.g. https://openrouter.ai/api/v1`,
+      );
+    }
 
     if (data.id) {
       const patch: {
@@ -179,6 +184,15 @@ export const testAiProvider = createServerFn({ method: "POST" })
       const key = process.env["LOVABLE_API_KEY"];
       if (!key) throw new Error("Lovable AI is not available on this project.");
       provider = lovableProvider(key);
+    }
+
+    if (!/^https?:\/\/[^\s]+$/i.test(provider.baseUrl)) {
+      throw new Error(
+        `The saved base URL ("${provider.baseUrl}") is not a web address. Edit this model and set it to your provider's endpoint, e.g. https://openrouter.ai/api/v1`,
+      );
+    }
+    if (provider.authStyle !== "none" && !provider.apiKey) {
+      throw new Error("No API key is saved for this model. Edit it and paste your key.");
     }
 
     const started = Date.now();

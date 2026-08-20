@@ -173,7 +173,7 @@ function ModelsPage() {
       const result = await testAiProvider({ data: { id } });
       setResults((current) => ({ ...current, [key]: result }));
       if (result.ok) toast.success(`Replied in ${result.ms} ms`);
-      else toast.error("The endpoint rejected the test call.");
+      else toast.error(result.detail || "The endpoint rejected the test call.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Test failed.");
     } finally {
