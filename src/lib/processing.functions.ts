@@ -445,7 +445,13 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           error: message.slice(0, 800),
         });
       }
-      return { ok: false, filename: attachment.filename, confidence: null, error: message.slice(0, 300) };
+      return {
+        ok: false,
+        filename: attachment.filename,
+        confidence: null,
+        model: null as string | null,
+        error: message.slice(0, 300),
+      };
     }
   });
 
