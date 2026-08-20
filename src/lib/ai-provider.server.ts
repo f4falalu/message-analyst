@@ -10,10 +10,43 @@ export type ProviderConfig = {
   label: string;
   baseUrl: string;
   model: string;
+  /** Ordered read list: the primary model first, then any backups. */
+  models: string[];
   apiKey: string;
   authStyle: "bearer" | "lovable" | "x-api-key" | "none";
   supportsPdf: boolean;
 };
+
+/**
+ * A model that just hit a rate limit is parked for a while so other files in
+ * the same run skip it instead of hammering it. In-memory and per-worker on
+ * purpose — it is a hint, never a source of truth.
+ */
+const COOLDOWN_MS = 60_000;
+const cooldowns = new Map<string, number>();
+
+export function markModelCooling(model: string, ms = COOLDOWN_MS): void {
+  cooldowns.set(model, Date.now() + ms);
+}
+
+export function isModelCooling(model: string): boolean {
+  const until = cooldowns.get(model);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    cooldowns.delete(model);
+    return false;
+  }
+  return true;
+}
+
+/** Primary first, then backups, deduped and cleaned. */
+export function modelList(primary: string, fallbacks: unknown): string[] {
+  const extra = Array.isArray(fallbacks) ? fallbacks : [];
+  const all = [primary, ...extra]
+    .map((m) => (typeof m === "string" ? m.trim() : ""))
+    .filter((m) => m.length > 0);
+  return Array.from(new Set(all));
+}
 
 export const LOVABLE_BASE_URL = "https://ai.gateway.lovable.dev/v1";
 export const LOVABLE_DEFAULT_MODEL = "google/gemini-3.6-flash";
