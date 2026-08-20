@@ -50,6 +50,7 @@ const emptyForm = {
   label: "",
   baseUrl: "",
   model: "",
+  fallbackModels: "",
   apiKey: "",
   authStyle: "bearer",
   supportsPdf: true,
@@ -96,6 +97,9 @@ function ModelsPage() {
       authStyle: next.authStyle,
       supportsPdf: next.supportsPdf,
       model: next.models[0]?.id ?? "",
+      fallbackModels: current.id
+        ? current.fallbackModels
+        : next.models.slice(1, 5).map((m) => m.id).join("\n"),
     }));
   };
 
@@ -108,6 +112,7 @@ function ModelsPage() {
       label: provider.label,
       baseUrl: provider.baseUrl,
       model: provider.model,
+      fallbackModels: (provider.fallbackModels ?? []).join("\n"),
       apiKey: "",
       authStyle: provider.authStyle,
       supportsPdf: provider.supportsPdf,
@@ -125,6 +130,10 @@ function ModelsPage() {
           label: form.label,
           baseUrl: form.baseUrl,
           model: form.model,
+          fallbackModels: form.fallbackModels
+            .split(/[\n,]/)
+            .map((m) => m.trim())
+            .filter(Boolean),
           apiKey: form.apiKey || null,
           authStyle: form.authStyle,
           supportsPdf: form.supportsPdf,
@@ -315,6 +324,20 @@ function ModelsPage() {
               />
             </div>
 
+            <div className="space-y-1.5 md:col-span-2">
+              <Label>Backup models (bounce here when rate limited)</Label>
+              <textarea
+                className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground"
+                value={form.fallbackModels}
+                placeholder={"one model id per line\ne.g. qwen/qwen2.5-vl-72b-instruct"}
+                onChange={(e) => setForm({ ...form, fallbackModels: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                When the main model hits a rate limit, the next id in this list reads that file straight
+                away and the tired model is rested for a minute. Up to 8 ids, tried in order.
+              </p>
+            </div>
+
             <div className="space-y-1.5">
               <Label>API key {form.id ? "(leave blank to keep the saved key)" : ""}</Label>
               <Input
@@ -400,6 +423,11 @@ function ModelsPage() {
                   <p className="mt-1 font-mono text-xs text-muted-foreground">
                     {provider.model} · {provider.baseUrl}
                   </p>
+                  {provider.fallbackModels?.length ? (
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      backups: {provider.fallbackModels.join(", ")}
+                    </p>
+                  ) : null}
                   <p className="mt-1 text-xs text-muted-foreground">
                     Key {provider.hasKey ? provider.keyPreview : "not set"}
                     {provider.notes ? ` · ${provider.notes}` : ""}

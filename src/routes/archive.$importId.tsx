@@ -161,6 +161,7 @@ type LiveFile = {
   durationMs: number;
   attempts: number;
   error: string | null;
+  model?: string | null;
 };
 
 type EventRow = {
@@ -878,6 +879,9 @@ function ArchivePage() {
                     <span className="text-muted-foreground">{(file.durationMs / 1000).toFixed(1)}s</span>
                     {file.attempts > 1 ? (
                       <span className="text-muted-foreground">retried {file.attempts - 1}×</span>
+                    ) : null}
+                    {file.model ? (
+                      <span className="font-mono text-muted-foreground">{file.model}</span>
                     ) : null}
                     {file.confidence !== null ? (
                       <span className="text-muted-foreground">{formatConfidence(file.confidence)}</span>

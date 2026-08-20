@@ -6,6 +6,7 @@ export type ProviderSummary = {
   label: string;
   baseUrl: string;
   model: string;
+  fallbackModels: string[];
   authStyle: string;
   supportsPdf: boolean;
   isActive: boolean;
@@ -25,7 +26,7 @@ export const listAiProviders = createServerFn({ method: "GET" }).handler(async (
   const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
   const { data, error } = await supabase
     .from("ai_providers")
-    .select("id, label, base_url, model, api_key, auth_style, supports_pdf, is_active, notes, updated_at")
+    .select("id, label, base_url, model, fallback_models, api_key, auth_style, supports_pdf, is_active, notes, updated_at")
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
 
@@ -34,6 +35,7 @@ export const listAiProviders = createServerFn({ method: "GET" }).handler(async (
     label: row.label,
     baseUrl: row.base_url,
     model: row.model,
+    fallbackModels: row.fallback_models ?? [],
     authStyle: row.auth_style,
     supportsPdf: row.supports_pdf,
     isActive: row.is_active,
@@ -57,6 +59,7 @@ export const saveAiProvider = createServerFn({ method: "POST" })
       label: string;
       baseUrl: string;
       model: string;
+      fallbackModels?: string[] | null;
       apiKey?: string | null;
       authStyle: string;
       supportsPdf: boolean;
@@ -66,6 +69,10 @@ export const saveAiProvider = createServerFn({ method: "POST" })
       label: String(input.label).trim().slice(0, 120),
       baseUrl: String(input.baseUrl).trim().replace(/\/+$/, "").slice(0, 300),
       model: String(input.model).trim().slice(0, 200),
+      fallbackModels: (Array.isArray(input.fallbackModels) ? input.fallbackModels : [])
+        .map((m) => String(m).trim().slice(0, 200))
+        .filter((m) => m.length > 0)
+        .slice(0, 8),
       apiKey: input.apiKey ? String(input.apiKey).trim() : null,
       authStyle: ["bearer", "x-api-key", "none", "lovable"].includes(String(input.authStyle))
         ? String(input.authStyle)
@@ -90,6 +97,7 @@ export const saveAiProvider = createServerFn({ method: "POST" })
         label: string;
         base_url: string;
         model: string;
+        fallback_models: string[];
         auth_style: string;
         supports_pdf: boolean;
         notes: string | null;
@@ -98,6 +106,7 @@ export const saveAiProvider = createServerFn({ method: "POST" })
         label: data.label,
         base_url: data.baseUrl,
         model: data.model,
+        fallback_models: data.fallbackModels,
         auth_style: data.authStyle,
         supports_pdf: data.supportsPdf,
         notes: data.notes,
@@ -115,6 +124,7 @@ export const saveAiProvider = createServerFn({ method: "POST" })
         label: data.label,
         base_url: data.baseUrl,
         model: data.model,
+        fallback_models: data.fallbackModels,
         api_key: data.apiKey,
         auth_style: data.authStyle,
         supports_pdf: data.supportsPdf,
@@ -160,13 +170,13 @@ export const testAiProvider = createServerFn({ method: "POST" })
   .inputValidator((input: { id?: string | null }) => ({ id: input.id ? String(input.id) : null }))
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
-    const { lovableProvider, providerHeaders } = await import("./ai-provider.server");
+    const { lovableProvider, providerHeaders, modelList } = await import("./ai-provider.server");
 
     let provider: ProviderConfig;
     if (data.id) {
       const { data: row, error } = await supabase
         .from("ai_providers")
-        .select("id, label, base_url, model, api_key, auth_style, supports_pdf")
+        .select("id, label, base_url, model, fallback_models, api_key, auth_style, supports_pdf")
         .eq("id", data.id)
         .maybeSingle();
       if (error) throw new Error(error.message);
@@ -176,6 +186,7 @@ export const testAiProvider = createServerFn({ method: "POST" })
         label: row.label,
         baseUrl: row.base_url.replace(/\/+$/, ""),
         model: row.model,
+        models: modelList(row.model, row.fallback_models),
         apiKey: row.api_key ?? "",
         authStyle: row.auth_style as ProviderConfig["authStyle"],
         supportsPdf: row.supports_pdf,
