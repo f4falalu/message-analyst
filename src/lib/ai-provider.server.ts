@@ -69,6 +69,7 @@ type Row = {
   label: string;
   base_url: string;
   model: string;
+  fallback_models?: string[] | null;
   api_key: string | null;
   auth_style: string;
   supports_pdf: boolean;
@@ -81,6 +82,7 @@ function fromRow(row: Row): ProviderConfig {
     label: row.label,
     baseUrl: row.base_url.replace(/\/+$/, ""),
     model: row.model,
+    models: modelList(row.model, row.fallback_models),
     apiKey: row.api_key ?? "",
     authStyle:
       style === "lovable" || style === "x-api-key" || style === "none" ? style : "bearer",
