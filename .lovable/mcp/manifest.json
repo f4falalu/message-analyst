@@ -3,7 +3,12 @@
   "sdk_version": "0.26.1",
   "path": "/mcp",
   "auth": {
-    "type": "none"
+    "type": "oauth",
+    "issuer": "https://zucqwhinkjgjiuaetrbn.supabase.co/auth/v1",
+    "resource_name": "Chat Archive Hub",
+    "accepted_audiences": [
+      "authenticated"
+    ]
   },
   "mcp": {
     "server": {
