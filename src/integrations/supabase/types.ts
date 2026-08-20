@@ -20,6 +20,7 @@ export type Database = {
           auth_style: string
           base_url: string
           created_at: string
+          fallback_models: string[]
           id: string
           is_active: boolean
           label: string
@@ -33,6 +34,7 @@ export type Database = {
           auth_style?: string
           base_url: string
           created_at?: string
+          fallback_models?: string[]
           id?: string
           is_active?: boolean
           label: string
@@ -46,6 +48,7 @@ export type Database = {
           auth_style?: string
           base_url?: string
           created_at?: string
+          fallback_models?: string[]
           id?: string
           is_active?: boolean
           label?: string
@@ -284,6 +287,7 @@ export type Database = {
           filename: string
           id: string
           import_id: string
+          model: string | null
           outcome: string
           run_id: string
         }
@@ -298,6 +302,7 @@ export type Database = {
           filename: string
           id?: string
           import_id: string
+          model?: string | null
           outcome: string
           run_id: string
         }
@@ -312,6 +317,7 @@ export type Database = {
           filename?: string
           id?: string
           import_id?: string
+          model?: string | null
           outcome?: string
           run_id?: string
         }
