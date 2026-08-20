@@ -304,6 +304,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             durationMs: Date.now() - startedAt,
             attempts: 1,
             error: message.slice(0, 300),
+            model: null,
           });
 
 
@@ -320,6 +321,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               field_confidence: null,
               duration_ms: Date.now() - startedAt,
               error: message.slice(0, 800),
+              model: null,
             });
           }
         }
