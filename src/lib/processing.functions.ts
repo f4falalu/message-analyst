@@ -141,6 +141,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
           durationMs: number;
           attempts: number;
           error: string | null;
+          model: string | null;
         }[],
       };
 
@@ -163,6 +164,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       field_confidence: Json | null;
       duration_ms: number;
       error: string | null;
+      model: string | null;
     };
     const events: EventRow[] = [];
 
@@ -174,6 +176,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       durationMs: number;
       attempts: number;
       error: string | null;
+      model: string | null;
     };
     const files: FileResult[] = [];
 
@@ -254,6 +257,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             durationMs: Date.now() - startedAt,
             attempts,
             error: null,
+            model: extracted.usedModel ?? provider.model,
           });
 
           if (data.runId) {
@@ -268,6 +272,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               field_confidence: extracted.field_confidence as unknown as Json,
               duration_ms: Date.now() - startedAt,
               error: attempts > 1 ? `Recovered after ${attempts} attempts` : null,
+              model: extracted.usedModel ?? provider.model,
             });
           }
 
