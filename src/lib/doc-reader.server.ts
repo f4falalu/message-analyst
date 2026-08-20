@@ -214,31 +214,77 @@ export async function readDocument(params: {
     ? `Surrounding WhatsApp conversation (context only — the document itself is authoritative):\n${params.chatContext}\n\nRead the attached document.`
     : "Read the attached document.";
 
-  const response = await fetch(`${params.provider.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: providerHeaders(params.provider),
-    body: JSON.stringify({
-      model: params.provider.model,
+  // Bounce across the configured model list: a rate limited or unavailable
+  // model steps aside and the next one reads this file straight away.
+  const configured = params.provider.models.length
+    ? params.provider.models
+    : [params.provider.model];
+  const warm = configured.filter((m) => !isModelCooling(m));
+  const order = warm.length ? [...warm, ...configured.filter((m) => !warm.includes(m))] : configured;
+  const isOpenRouter = params.provider.baseUrl.includes("openrouter.ai");
+
+  let lastError: (Error & { status?: number }) | null = null;
+
+  for (let index = 0; index < order.length; index += 1) {
+    const model = order[index]!;
+    const isLast = index === order.length - 1;
+
+    const body: Record<string, unknown> = {
+      model,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: [{ type: "text", text: userText }, mediaBlock] },
       ],
       response_format: { type: "json_object" },
-    }),
-  });
+    };
+    // OpenRouter can also route around a dead upstream on its own side.
+    if (isOpenRouter && order.length > 1) body["models"] = order.slice(index);
 
-  if (!response.ok) {
-    const body = await response.text();
-    const error = new Error(`AI request failed [${response.status}]: ${body}`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
+    let response: Response;
+    try {
+      response = await fetch(`${params.provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: providerHeaders(params.provider),
+        body: JSON.stringify(body),
+      });
+    } catch (networkError) {
+      lastError = networkError as Error;
+      if (isLast) throw lastError;
+      continue;
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      const error = new Error(
+        `AI request failed [${response.status}] on ${model}: ${text}`,
+      ) as Error & { status?: number };
+      error.status = response.status;
+      lastError = error;
+
+      const switchable =
+        response.status === 429 ||
+        response.status === 402 ||
+        response.status === 404 ||
+        response.status === 400 ||
+        response.status >= 500;
+      if (response.status === 429) markModelCooling(model);
+      if (switchable && !isLast) continue;
+      throw error;
+    }
+
+    const payload = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      model?: string;
+    };
+    const content = payload.choices?.[0]?.message?.content ?? "";
+    if (!content) {
+      lastError = new Error(`AI returned an empty response from ${model}`);
+      if (!isLast) continue;
+      throw lastError;
+    }
+
+    return { ...normalise(parseJsonLoose(content)), usedModel: payload.model || model };
   }
 
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content ?? "";
-  if (!content) throw new Error("AI returned an empty response");
-
-  return normalise(parseJsonLoose(content));
+  throw lastError ?? new Error("The document could not be read.");
 }
