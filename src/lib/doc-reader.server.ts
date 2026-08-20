@@ -1,6 +1,11 @@
 // Server-only helpers for reading request/receipt documents with Lovable AI.
 
-import { providerHeaders, type ProviderConfig } from "./ai-provider.server";
+import {
+  isModelCooling,
+  markModelCooling,
+  providerHeaders,
+  type ProviderConfig,
+} from "./ai-provider.server";
 
 /** How large an inlined PDF may be. Heavy files are read one at a time. */
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -42,6 +47,8 @@ export type ExtractedDoc = {
   raw_text: string;
   confidence: number;
   field_confidence: FieldConfidence;
+  /** Which model id actually produced this read. */
+  usedModel?: string;
 };
 
 const SYSTEM_PROMPT = `You read scanned procurement paperwork exchanged over WhatsApp: supply requests, requisitions, invoices, receipts, payment confirmations and hand-written notes from health facilities.
