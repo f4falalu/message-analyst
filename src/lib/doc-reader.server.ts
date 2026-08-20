@@ -266,8 +266,10 @@ export async function readDocument(params: {
       ],
       response_format: { type: "json_object" },
     };
-    // OpenRouter can also route around a dead upstream on its own side.
-    if (isOpenRouter && order.length > 1) body["models"] = order.slice(index);
+    // OpenRouter can also route around a dead upstream on its own side, but
+    // its API accepts at most three entries. The outer loop still preserves
+    // the complete configured fallback chain beyond this native window.
+    if (isOpenRouter && order.length > 1) body["models"] = order.slice(index, index + 3);
 
     let response: Response;
     try {
