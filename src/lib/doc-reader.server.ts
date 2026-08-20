@@ -23,6 +23,28 @@ export class DeferError extends Error {
   }
 }
 
+export class AiRequestError extends Error {
+  readonly status: number;
+  readonly rateLimited: boolean;
+  readonly retryAfterMs: number;
+  readonly model: string;
+
+  constructor(params: {
+    message: string;
+    status: number;
+    rateLimited: boolean;
+    retryAfterMs: number;
+    model: string;
+  }) {
+    super(params.message);
+    this.name = "AiRequestError";
+    this.status = params.status;
+    this.rateLimited = params.rateLimited;
+    this.retryAfterMs = params.retryAfterMs;
+    this.model = params.model;
+  }
+}
+
 
 export type FieldConfidence = {
   facility_name: number | null;
@@ -230,7 +252,7 @@ export async function readDocument(params: {
   const order = warm.length ? [...warm, ...configured.filter((m) => !warm.includes(m))] : configured;
   const isOpenRouter = params.provider.baseUrl.includes("openrouter.ai");
 
-  let lastError: (Error & { status?: number }) | null = null;
+  let lastError: Error | null = null;
 
   for (let index = 0; index < order.length; index += 1) {
     const model = order[index]!;
@@ -262,19 +284,30 @@ export async function readDocument(params: {
 
     if (!response.ok) {
       const text = await response.text();
-      const error = new Error(
-        `AI request failed [${response.status}] on ${model}: ${text}`,
-      ) as Error & { status?: number };
-      error.status = response.status;
+      // OpenRouter sometimes wraps a rate limit from its PDF parsing service in
+      // HTTP 400. Classify the response body as well as the HTTP status so the
+      // file rotates/requeues instead of being recorded as permanently broken.
+      const bodySaysRateLimited =
+        /rate[ -]?limit|too many requests|retry shortly|temporarily throttled|capacity limit/i.test(text);
+      const rateLimited = response.status === 429 || bodySaysRateLimited;
+      const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+      const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+        ? retryAfterSeconds * 1000
+        : 30_000;
+      const error = new AiRequestError({
+        message: `AI request failed [${response.status}] on ${model}: ${text}`,
+        status: response.status,
+        rateLimited,
+        retryAfterMs,
+        model,
+      });
       lastError = error;
 
-      const switchable =
-        response.status === 429 ||
-        response.status === 402 ||
+      const modelUnavailable =
         response.status === 404 ||
-        response.status === 400 ||
-        response.status >= 500;
-      if (response.status === 429) markModelCooling(model);
+        (response.status === 400 && /model.{0,80}(not found|unavailable|no endpoint|not supported)/i.test(text));
+      const switchable = rateLimited || modelUnavailable || response.status >= 500;
+      if (rateLimited) markModelCooling(model, retryAfterMs);
       if (switchable && !isLast) continue;
       throw error;
     }
