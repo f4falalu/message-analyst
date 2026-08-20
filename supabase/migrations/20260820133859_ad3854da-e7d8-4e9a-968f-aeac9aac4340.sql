@@ -1,0 +1,1 @@
+update public.ai_providers set base_url = 'https://openrouter.ai/api/v1', label = 'Buddy (OpenRouter)', is_active = true where base_url = 'Buddy';

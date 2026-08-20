@@ -270,6 +270,9 @@ function ModelsPage() {
                 placeholder="e.g. OpenRouter — Qwen VL"
                 onChange={(e) => setForm({ ...form, label: e.target.value })}
               />
+              <p className="text-xs text-muted-foreground">
+                Just a nickname for you (this is where a key name like "Buddy" goes).
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -279,7 +282,11 @@ function ModelsPage() {
                 placeholder="https://openrouter.ai/api/v1"
                 onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
               />
+              <p className="text-xs text-muted-foreground">
+                The provider's endpoint address — not your key or its name.
+              </p>
             </div>
+
 
             <div className="space-y-1.5">
               <Label>Model</Label>
