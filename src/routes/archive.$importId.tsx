@@ -551,7 +551,8 @@ function ArchivePage() {
             return;
           }
           if (result.rateLimited) {
-            await new Promise((resolve) => setTimeout(resolve, 8000));
+            const waitMs = Math.max(8_000, Math.min(result.retryAfterMs || 30_000, 60_000));
+            await new Promise((resolve) => setTimeout(resolve, waitMs + Math.random() * 2_000));
             continue;
           }
           if (result.processed === 0 && result.failed === 0 && result.deferred === 0) return;

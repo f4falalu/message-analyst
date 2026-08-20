@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { DeferError, readDocument } from "./doc-reader.server";
+import { AiRequestError, DeferError, readDocument } from "./doc-reader.server";
 import { buildRecords, chatFactsFor, type BuilderAttachment, type BuilderMessage } from "./record-builder";
 import { crossCheckSources, type Issue, type Mapping } from "./data-rules";
 import type { Json } from "@/integrations/supabase/types";
@@ -132,6 +132,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
         deferred: 0,
         remaining: count ?? 0,
         rateLimited: false,
+        retryAfterMs: 0,
         creditsExhausted: false,
         files: [] as {
           attachmentId: string;
@@ -151,6 +152,7 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
     let failed = 0;
     let deferred = 0;
     let rateLimited = false;
+    let retryAfterMs = 0;
     let creditsExhausted = false;
 
     type EventRow = {
@@ -223,6 +225,11 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
               break;
             } catch (readError) {
               const text = readError instanceof Error ? readError.message : String(readError);
+              // readDocument already tried every configured model. Return a
+              // rate-limited file to the queue and let the lane honour the
+              // provider delay; keeping this server request open just repeats
+              // the same exhausted list and risks a platform timeout.
+              if (readError instanceof AiRequestError && readError.rateLimited) throw readError;
               const transient =
                 text.includes("[429]") ||
                 text.includes("[500]") ||
@@ -278,9 +285,19 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
 
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (message.includes("[429]")) rateLimited = true;
+          const isRateLimit =
+            (error instanceof AiRequestError && error.rateLimited) ||
+            message.includes("[429]") ||
+            /rate[ -]?limit|too many requests|retry shortly|temporarily throttled/i.test(message);
+          if (isRateLimit) {
+            rateLimited = true;
+            retryAfterMs = Math.max(
+              retryAfterMs,
+              error instanceof AiRequestError ? error.retryAfterMs : 30_000,
+            );
+          }
           if (message.includes("[402]")) creditsExhausted = true;
-          const requeued = message.includes("[429]");
+          const requeued = isRateLimit;
           // A deferred file is *unread*, not empty — it must never look like a
           // document that was read and had nothing in it.
           const isDeferred = error instanceof DeferError || (error as { deferred?: boolean })?.deferred === true;
@@ -338,7 +355,16 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
       .eq("import_id", data.importId)
       .eq("ocr_status", "pending");
 
-    return { processed, failed, deferred, remaining: count ?? 0, rateLimited, creditsExhausted, files };
+    return {
+      processed,
+      failed,
+      deferred,
+      remaining: count ?? 0,
+      rateLimited,
+      retryAfterMs,
+      creditsExhausted,
+      files,
+    };
   });
 
 export const reprocessAttachment = createServerFn({ method: "POST" })
@@ -425,11 +451,14 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
       };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
+      const isRateLimit =
+        (caught instanceof AiRequestError && caught.rateLimited) ||
+        /rate[ -]?limit|too many requests|retry shortly|temporarily throttled/i.test(message);
       const isDeferred = caught instanceof DeferError || (caught as { deferred?: boolean })?.deferred === true;
       await supabase
         .from("attachments")
         .update({
-          ocr_status: isDeferred ? "deferred" : "error",
+          ocr_status: isRateLimit ? "pending" : isDeferred ? "deferred" : "error",
           ocr_error: message.slice(0, 800),
           processed_at: new Date().toISOString(),
         })
@@ -440,7 +469,7 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           import_id: attachment.import_id,
           attachment_id: attachment.id,
           filename: attachment.filename,
-          outcome: isDeferred ? "deferred" : "error",
+          outcome: isRateLimit ? "requeued" : isDeferred ? "deferred" : "error",
           duration_ms: Date.now() - startedAt,
           error: message.slice(0, 800),
         });
