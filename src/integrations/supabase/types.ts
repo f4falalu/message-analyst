@@ -159,6 +159,45 @@ export type Database = {
           },
         ]
       }
+      extraction_cache: {
+        Row: {
+          content_key: string
+          created_at: string
+          extracted: Json
+          filename: string
+          id: string
+          model: string | null
+          raw_text: string | null
+          size_bytes: number | null
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          content_key: string
+          created_at?: string
+          extracted: Json
+          filename: string
+          id?: string
+          model?: string | null
+          raw_text?: string | null
+          size_bytes?: number | null
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          content_key?: string
+          created_at?: string
+          extracted?: Json
+          filename?: string
+          id?: string
+          model?: string | null
+          raw_text?: string | null
+          size_bytes?: number | null
+          source?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       imports: {
         Row: {
           chat_parsed: boolean
