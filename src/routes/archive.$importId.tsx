@@ -1103,6 +1103,12 @@ function ArchivePage() {
                   Retry failed
                 </Button>
               ) : null}
+              {counts.pending + counts.error + counts.deferred > 0 ? (
+                <Button variant="outline" onClick={() => void skipAlreadyRead(true)} disabled={reading}>
+                  Skip already-read files
+                </Button>
+              ) : null}
+
 
               <Button variant="secondary" onClick={build} disabled={building || counts.done === 0}>
                 {building ? "Building…" : "Build ledger"}
