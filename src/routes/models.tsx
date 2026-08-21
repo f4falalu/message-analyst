@@ -71,6 +71,9 @@ function ModelsPage() {
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; ms: number }>>({});
   const [discovered, setDiscovered] = useState<string[]>([]);
   const [discovering, setDiscovering] = useState(false);
+  const [pullInput, setPullInput] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
 
 
   const preset = useMemo(
