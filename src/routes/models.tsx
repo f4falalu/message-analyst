@@ -153,7 +153,10 @@ function ModelsPage() {
     }
   };
 
-  /** Local endpoints can only be tested from the browser. */
+  /**
+   * Local endpoints can only be tested from the browser: is it up, and does it
+   * serve something that can actually read a scan?
+   */
   const checkLocal = async () => {
     setTesting(form.id ?? "local-form");
     const result = await checkLocalEndpoint(form.baseUrl);
@@ -161,14 +164,33 @@ function ModelsPage() {
       ...current,
       [form.id ?? "local-form"]: { ok: result.ok, detail: result.detail, ms: 0 },
     }));
-    if (result.ok) {
-      setDiscovered(result.models);
-      toast.success(result.detail);
-    } else {
-      toast.error(result.detail);
-    }
+    if (result.models.length > 0) setDiscovered(result.models);
+    if (result.ok) toast.success(result.detail);
+    else toast.error(result.detail);
     setTesting(null);
   };
+
+  /** Pull an Ollama tag onto this machine and pin that exact version. */
+  const pullTag = async () => {
+    const tag = pullInput.trim();
+    if (!tag) return;
+    setPulling(true);
+    setPullStatus("starting…");
+    try {
+      const pinned = await pullOllamaModel(form.baseUrl, tag, (line) => setPullStatus(line));
+      setForm((current) => ({ ...current, model: pinned }));
+      setDiscovered(await listLocalModels(form.baseUrl));
+      setPullStatus(`Pinned ${pinned}`);
+      toast.success(`Pulled and pinned ${pinned}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not pull that model.";
+      setPullStatus(message);
+      toast.error(message);
+    } finally {
+      setPulling(false);
+    }
+  };
+
 
   const save = async () => {
     setBusy(true);
