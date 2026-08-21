@@ -497,6 +497,28 @@ function ArchivePage() {
     }
   };
 
+  /**
+   * Anything read in an earlier pass (same file name and size) is filled in
+   * from the saved results, so a stop-and-restart only pays for what is
+   * genuinely missing. Runs before every read, and on demand from the button.
+   */
+  const skipAlreadyRead = async (announce = false): Promise<number> => {
+    try {
+      const { restored } = await restoreCache({ data: { importId } });
+      if (restored > 0) {
+        toast.success(`${restored.toLocaleString()} file(s) restored from earlier reads — not read again.`);
+        void loadCounts();
+        void refreshFiles();
+      } else if (announce) {
+        toast.info("Nothing to restore — no waiting file has been read before.");
+      }
+      return restored;
+    } catch (error) {
+      if (announce) toast.error(error instanceof Error ? error.message : "Could not check earlier reads.");
+      return 0;
+    }
+  };
+
   const readAll = async () => {
     setPaused(false);
     parseStoppedRef.current = false;
@@ -506,7 +528,9 @@ function ArchivePage() {
     setLiveFailed(0);
     setLiveDeferred(0);
     setLiveStart(Date.now());
+    await skipAlreadyRead();
     const lanes = Number(concurrency);
+
     const chunk = Number(chunkSize);
     let runId: string | null = null;
     let stopped = false;
