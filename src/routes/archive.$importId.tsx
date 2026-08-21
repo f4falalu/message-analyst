@@ -268,7 +268,9 @@ function ArchivePage() {
   const fetchReport = useServerFn(getUnmatchedReport);
   const fetchEvidence = useServerFn(getRecordEvidence);
 
+  const restoreCache = useServerFn(restoreCachedReads);
   const claimLocal = useServerFn(claimLocalBatch);
+
   const storeLocal = useServerFn(saveLocalRead);
   const loadLocalProvider = useServerFn(getLocalProvider);
   const [localProvider, setLocalProvider] = useState<LocalProviderInfo | null>(null);
