@@ -255,6 +255,17 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
             })
             .eq("id", attachment.id);
           if (updateError) throw new Error(updateError.message);
+          {
+            const { rememberExtraction } = await import("./extraction-cache.server");
+            await rememberExtraction(
+              supabase,
+              attachment,
+              extracted,
+              extracted.usedModel ?? provider.model,
+              "server",
+            );
+          }
+
           processed += 1;
           files.push({
             attachmentId: attachment.id,
