@@ -651,7 +651,9 @@ function ArchivePage() {
     setLiveFailed(0);
     setLiveDeferred(0);
     setLiveStart(Date.now());
+    await skipAlreadyRead();
     const lanes = Math.max(1, Number(localLanes));
+
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
