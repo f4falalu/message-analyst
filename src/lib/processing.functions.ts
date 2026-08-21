@@ -445,6 +445,17 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
         })
         .eq("id", attachment.id);
 
+      {
+        const { rememberExtraction } = await import("./extraction-cache.server");
+        await rememberExtraction(
+          supabase,
+          attachment,
+          extracted,
+          extracted.usedModel ?? provider.model,
+          "server",
+        );
+      }
+
       if (data.runId) {
         await supabase.from("processing_events").insert({
           run_id: data.runId,
@@ -456,10 +467,11 @@ export const reprocessAttachment = createServerFn({ method: "POST" })
           confidence: extracted.confidence,
           field_confidence: extracted.field_confidence as unknown as Json,
           duration_ms: Date.now() - startedAt,
-          error: "Manual reprocess",
+          error: data.useCloudFallback ? "Cloud fallback after local read failed" : "Manual reprocess",
           model: extracted.usedModel ?? provider.model,
         });
       }
+
 
       return {
         ok: true,
