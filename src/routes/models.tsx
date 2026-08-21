@@ -347,6 +347,79 @@ function ModelsPage() {
               </p>
             </div>
 
+            <div className="space-y-1.5">
+              <Label>Where it runs</Label>
+              <Select
+                value={form.runLocation}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    runLocation: value as "server" | "browser",
+                    ...(value === "browser" ? { authStyle: "none", apiKey: "" } : {}),
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="server">In the cloud (a hosted provider)</SelectItem>
+                  <SelectItem value="browser">This computer (Ollama, LM Studio, vLLM…)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {form.runLocation === "browser"
+                  ? "Reading happens in this browser tab, so it can reach a model on your own machine. Keep the tab open while a run is going, and allow this page in your model's CORS setting (Ollama: OLLAMA_ORIGINS=*)."
+                  : "Reading happens on the server. Use this for OpenRouter, Mistral and anything else with a public https address — including your own machine behind a tunnel."}
+              </p>
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={discovering || !form.baseUrl}
+                  onClick={() => void fetchModels()}
+                >
+                  {discovering ? "Looking…" : "Fetch available models"}
+                </Button>
+                {form.runLocation === "browser" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!form.baseUrl || testing !== null}
+                    onClick={() => void checkLocal()}
+                  >
+                    Check connection
+                  </Button>
+                ) : null}
+              </div>
+              {discovered.length > 0 ? (
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-border/60 p-2">
+                  {discovered.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="block w-full truncate rounded px-2 py-1 text-left font-mono text-xs text-foreground hover:bg-muted"
+                      onClick={() => setForm((current) => ({ ...current, model: id }))}
+                    >
+                      {id}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Pick one to use as the main model — anything you add to the backup list below is tried
+                after it. This is how the same setup follows you to another computer: point it at
+                whatever that machine is running and fetch its list.
+              </p>
+            </div>
+
+
+
 
             <div className="space-y-1.5">
               <Label>Model</Label>
