@@ -170,7 +170,17 @@ export const saveLocalRead = createServerFn({ method: "POST" })
         })
         .eq("id", data.attachmentId);
       if (error) throw new Error(error.message);
+
+      // Remember it so a stopped-and-restarted import never re-reads this page.
+      const { rememberExtraction } = await import("./extraction-cache.server");
+      const { data: row } = await supabase
+        .from("attachments")
+        .select("filename, size_bytes")
+        .eq("id", data.attachmentId)
+        .maybeSingle();
+      if (row) await rememberExtraction(supabase, row, extracted, data.model, "browser");
     } else {
+
       await supabase
         .from("attachments")
         .update({
