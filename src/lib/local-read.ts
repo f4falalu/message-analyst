@@ -71,22 +71,126 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
   return Array.from(new Set(ids));
 }
 
-export async function checkLocalEndpoint(
-  baseUrl: string,
-): Promise<{ ok: boolean; models: string[]; detail: string }> {
+/**
+ * Model ids that can actually look at a scan. Text-only models silently return
+ * nothing useful, so a run should never start on one.
+ */
+const VISION_HINTS =
+  /(vl|vision|llava|bakllava|moondream|minicpm-v|internvl|pixtral|gemma3|granite3\.?2-vision|qwen2\.?5vl|qwen3-vl|llama3\.2-vision|gpt-4o|gemini|claude|florence|docling|got-ocr|nanonets)/i;
+
+export function isVisionModel(id: string): boolean {
+  return VISION_HINTS.test(id);
+}
+
+export type EndpointCheck = {
+  ok: boolean;
+  models: string[];
+  visionModels: string[];
+  detail: string;
+};
+
+/**
+ * Verify a local endpoint before a run: is it reachable, and does it serve at
+ * least one model that can read a picture?
+ */
+export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck> {
   try {
     const models = await listLocalModels(baseUrl);
+    const visionModels = models.filter(isVisionModel);
+    if (models.length === 0) {
+      return {
+        ok: false,
+        models,
+        visionModels,
+        detail: "Reachable, but it listed no models. Pull or load a vision model first.",
+      };
+    }
+    if (visionModels.length === 0) {
+      return {
+        ok: false,
+        models,
+        visionModels,
+        detail: `Reachable with ${models.length} model${models.length === 1 ? "" : "s"}, but none of them can read pictures. Pull a vision model (e.g. qwen2.5vl:7b or llama3.2-vision:11b) before starting a run.`,
+      };
+    }
     return {
       ok: true,
       models,
-      detail: models.length
-        ? `Reachable — ${models.length} model${models.length === 1 ? "" : "s"} available.`
-        : "Reachable, but it listed no models. Pull or load a vision model first.",
+      visionModels,
+      detail: `Reachable — ${visionModels.length} vision-capable model${visionModels.length === 1 ? "" : "s"} of ${models.length} available (${visionModels.slice(0, 3).join(", ")}).`,
     };
   } catch (error) {
-    return { ok: false, models: [], detail: error instanceof Error ? error.message : "No response." };
+    return {
+      ok: false,
+      models: [],
+      visionModels: [],
+      detail: error instanceof Error ? error.message : "No response.",
+    };
   }
 }
+
+/**
+ * Pull an Ollama tag (e.g. "qwen2.5vl:7b") onto this machine, reporting
+ * progress lines as they stream in. Returns the exact tag now available so it
+ * can be pinned as the model used for reading.
+ */
+export async function pullOllamaModel(
+  baseUrl: string,
+  tag: string,
+  onProgress?: (line: string) => void,
+): Promise<string> {
+  const root = trimBase(baseUrl).replace(/\/v1$/, "");
+  const wanted = tag.trim();
+  if (!wanted) throw new Error("Type the model tag you want to pull, e.g. qwen2.5vl:7b");
+
+  let res: Response;
+  try {
+    res = await fetch(`${root}/api/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: wanted, stream: true }),
+    });
+  } catch (error) {
+    throw new LocalUnreachableError(root, error instanceof Error ? error.message : "no response");
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Ollama refused the pull (${res.status}): ${text.slice(0, 300)}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (reader) {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const payload = JSON.parse(line) as { status?: string; error?: string };
+          if (payload.error) throw new Error(payload.error);
+          if (payload.status) onProgress?.(payload.status);
+        } catch (error) {
+          if (error instanceof Error && !(error instanceof SyntaxError)) throw error;
+        }
+      }
+    }
+  }
+
+  // Pin whatever tag the machine actually ended up with (":latest" is implied).
+  const available = await listLocalModels(baseUrl);
+  return (
+    available.find((id) => id === wanted) ??
+    available.find((id) => id === `${wanted}:latest`) ??
+    available.find((id) => id.startsWith(`${wanted}:`)) ??
+    wanted
+  );
+}
+
 
 async function mediaBlockFor(job: LocalJob, supportsPdf: boolean): Promise<Record<string, unknown>> {
   const isPdf = (job.mimeType ?? "") === "application/pdf";
