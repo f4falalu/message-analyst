@@ -93,13 +93,17 @@ function ModelsPage() {
   const choosePreset = (presetId: string) => {
     const next = PROVIDER_PRESETS.find((p) => p.id === presetId);
     if (!next) return;
+    // A preset pointing at localhost only makes sense as a browser-run model.
+    const local = /localhost|127\.0\.0\.1|\[::1\]/i.test(next.baseUrl);
+    setDiscovered([]);
     setForm((current) => ({
       ...current,
       presetId,
       label: current.id ? current.label : next.label.split(" (")[0] ?? next.label,
       baseUrl: next.baseUrl,
-      authStyle: next.authStyle,
+      authStyle: local ? "none" : next.authStyle,
       supportsPdf: next.supportsPdf,
+      runLocation: local ? "browser" : "server",
       model: next.models[0]?.id ?? "",
       fallbackModels: current.id
         ? current.fallbackModels
@@ -110,6 +114,7 @@ function ModelsPage() {
   const edit = (provider: ProviderSummary) => {
     const matched =
       PROVIDER_PRESETS.find((p) => p.baseUrl && provider.baseUrl.startsWith(p.baseUrl))?.id ?? "custom";
+    setDiscovered([]);
     setForm({
       id: provider.id,
       presetId: matched,
@@ -120,9 +125,46 @@ function ModelsPage() {
       apiKey: "",
       authStyle: provider.authStyle,
       supportsPdf: provider.supportsPdf,
+      runLocation: provider.runLocation === "browser" ? "browser" : "server",
       notes: provider.notes ?? "",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  /** Ask the endpoint which models it serves — locally from the tab, otherwise via the server. */
+  const fetchModels = async () => {
+    setDiscovering(true);
+    try {
+      const ids =
+        form.runLocation === "browser"
+          ? await listLocalModels(form.baseUrl)
+          : (await discoverRemoteModels({ data: { baseUrl: form.baseUrl, id: form.id, apiKey: form.apiKey || null } }))
+              .models;
+      setDiscovered(ids);
+      if (ids.length === 0) toast.info("That endpoint listed no models yet.");
+      else toast.success(`Found ${ids.length} model${ids.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not list models.");
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  /** Local endpoints can only be tested from the browser. */
+  const checkLocal = async () => {
+    setTesting(form.id ?? "local-form");
+    const result = await checkLocalEndpoint(form.baseUrl);
+    setResults((current) => ({
+      ...current,
+      [form.id ?? "local-form"]: { ok: result.ok, detail: result.detail, ms: 0 },
+    }));
+    if (result.ok) {
+      setDiscovered(result.models);
+      toast.success(result.detail);
+    } else {
+      toast.error(result.detail);
+    }
+    setTesting(null);
   };
 
   const save = async () => {
@@ -141,9 +183,11 @@ function ModelsPage() {
           apiKey: form.apiKey || null,
           authStyle: form.authStyle,
           supportsPdf: form.supportsPdf,
+          runLocation: form.runLocation,
           notes: form.notes || null,
         },
       });
+
       toast.success(form.id ? "Model updated." : "Model saved.");
       setForm(emptyForm);
       await load();
