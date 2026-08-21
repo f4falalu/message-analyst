@@ -17,8 +17,13 @@ import {
   getUnmatchedReport,
   getRecordEvidence,
 } from "@/lib/processing.functions";
-
-
+import {
+  claimLocalBatch,
+  getLocalProvider,
+  saveLocalRead,
+  type LocalProviderInfo,
+} from "@/lib/local-read.functions";
+import { LocalDeferError, LocalUnreachableError, readWithLocalModel } from "@/lib/local-read";
 
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
@@ -261,6 +266,14 @@ function ArchivePage() {
   const fetchReport = useServerFn(getUnmatchedReport);
   const fetchEvidence = useServerFn(getRecordEvidence);
 
+  const claimLocal = useServerFn(claimLocalBatch);
+  const storeLocal = useServerFn(saveLocalRead);
+  const loadLocalProvider = useServerFn(getLocalProvider);
+  const [localProvider, setLocalProvider] = useState<LocalProviderInfo | null>(null);
+  const [localLanes, setLocalLanes] = useState("2");
+
+
+
 
   const [concurrency, setConcurrency] = useState("4");
   const [chunkSize, setChunkSize] = useState("3");
@@ -289,6 +302,19 @@ function ArchivePage() {
     parsePausedRef.current = stored;
     setParsePaused(stored);
   }, [pauseKey]);
+
+  // Is the active model one that runs on this machine?
+  useEffect(() => {
+    void (async () => {
+      try {
+        const result = await loadLocalProvider();
+        setLocalProvider(result.provider);
+      } catch {
+        setLocalProvider(null);
+      }
+    })();
+  }, [loadLocalProvider]);
+
   const setPaused = useCallback(
     (value: boolean) => {
       parsePausedRef.current = value;
@@ -584,6 +610,154 @@ function ArchivePage() {
     }
   };
 
+  // ── Read on this computer ────────────────────────────────────────────────
+  // The model runs on the user's machine, so the reading itself happens right
+  // here in the tab: the server only hands out files and stores results.
+  const readLocally = async () => {
+    if (!localProvider) return;
+    setPaused(false);
+    parseStoppedRef.current = false;
+    setReading(true);
+    setLiveFiles([]);
+    setLiveDone(0);
+    setLiveFailed(0);
+    setLiveDeferred(0);
+    setLiveStart(Date.now());
+    const lanes = Math.max(1, Number(localLanes));
+    let runId: string | null = null;
+    let stopped = false;
+    let stopReason: string | null = null;
+
+    try {
+      const started = await beginRun({
+        data: { importId, concurrency: lanes, chunkSize: 1, kind: "ocr-local", retryFailed: true },
+      });
+      runId = started.runId;
+      setActiveRunId(runId);
+      setLiveTotal(started.totalFiles);
+      if (started.requeued > 0) {
+        toast.info(`${started.requeued.toLocaleString()} previously failed files were queued again.`);
+      }
+      await loadRuns();
+
+      const lane = async () => {
+        for (;;) {
+          if (stopped || parseStoppedRef.current) {
+            if (parseStoppedRef.current) {
+              stopped = true;
+              stopReason = "Stopped by hand";
+            }
+            return;
+          }
+          while (parsePausedRef.current && !parseStoppedRef.current) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          if (parseStoppedRef.current) {
+            stopped = true;
+            stopReason = "Stopped by hand";
+            return;
+          }
+
+          const claimed = await claimLocal({ data: { importId, limit: 1 } });
+          if (claimed.jobs.length === 0) return;
+
+          for (const job of claimed.jobs) {
+            const startedAt = Date.now();
+            try {
+              const { extracted, model } = await readWithLocalModel(localProvider, job);
+              await storeLocal({
+                data: {
+                  importId,
+                  attachmentId: job.attachmentId,
+                  runId,
+                  filename: job.filename,
+                  durationMs: Date.now() - startedAt,
+                  extracted,
+                  model,
+                },
+              });
+              setLiveDone((current) => current + 1);
+              setLiveFiles((current) =>
+                [
+                  {
+                    attachmentId: job.attachmentId,
+                    filename: job.filename,
+                    outcome: "done",
+                    confidence: extracted.confidence,
+                    durationMs: Date.now() - startedAt,
+                    attempts: 1,
+                    error: null,
+                    model,
+                  },
+                  ...current,
+                ].slice(0, 40),
+              );
+            } catch (error) {
+              const unreachable = error instanceof LocalUnreachableError;
+              const deferred = error instanceof LocalDeferError;
+              const message = error instanceof Error ? error.message : String(error);
+              await storeLocal({
+                data: {
+                  importId,
+                  attachmentId: job.attachmentId,
+                  runId,
+                  filename: job.filename,
+                  durationMs: Date.now() - startedAt,
+                  error: message,
+                  deferred,
+                  requeue: unreachable,
+                },
+              });
+              if (deferred) setLiveDeferred((current) => current + 1);
+              else if (!unreachable) setLiveFailed((current) => current + 1);
+              setLiveFiles((current) =>
+                [
+                  {
+                    attachmentId: job.attachmentId,
+                    filename: job.filename,
+                    outcome: unreachable ? "requeued" : deferred ? "deferred" : "error",
+                    confidence: null,
+                    durationMs: Date.now() - startedAt,
+                    attempts: 1,
+                    error: message.slice(0, 300),
+                    model: null,
+                  },
+                  ...current,
+                ].slice(0, 40),
+              );
+              if (unreachable) {
+                stopped = true;
+                stopReason = "Local model unreachable";
+                toast.error(message);
+                return;
+              }
+            }
+          }
+          void loadCounts();
+        }
+      };
+
+      await Promise.all(Array.from({ length: lanes }, () => lane()));
+
+      await endRun({ data: { runId, status: stopped ? "stopped" : "completed", notes: stopReason } });
+      if (!stopped) toast.success("Reading finished on this computer.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Reading stopped unexpectedly.";
+      toast.error(message);
+      if (runId) await endRun({ data: { runId, status: "error", notes: message } });
+    } finally {
+      setReading(false);
+      setPaused(false);
+      parseStoppedRef.current = false;
+      setLiveStart(null);
+      void refreshFiles();
+      void loadCounts();
+      void loadRuns();
+      void loadEvents(runId ?? activeRunId);
+    }
+  };
+
+
   const reprocessFile = useCallback(
     async (attachmentId: string | null) => {
       if (!attachmentId) {
@@ -789,39 +963,71 @@ function ArchivePage() {
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-2">
-              <div className="space-y-1">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">Lanes</p>
-                <Select value={concurrency} onValueChange={setConcurrency} disabled={reading}>
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["1", "2", "3", "4", "6", "8"].map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">Per chunk</p>
-                <Select value={chunkSize} onValueChange={setChunkSize} disabled={reading}>
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["1", "2", "3", "4"].map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={readAll} disabled={reading || counts.pending === 0}>
-                {reading ? (parsePaused ? "Paused" : "Reading…") : "Read pending documents"}
-              </Button>
+              {localProvider ? (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Lanes (this computer)
+                    </p>
+                    <Select value={localLanes} onValueChange={setLocalLanes} disabled={reading}>
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["1", "2", "3", "4"].map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={readLocally} disabled={reading || counts.pending === 0}>
+                    {reading
+                      ? parsePaused
+                        ? "Paused"
+                        : "Reading on this computer…"
+                      : "Read on this computer"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground">Lanes</p>
+                    <Select value={concurrency} onValueChange={setConcurrency} disabled={reading}>
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["1", "2", "3", "4", "6", "8"].map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground">Per chunk</p>
+                    <Select value={chunkSize} onValueChange={setChunkSize} disabled={reading}>
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["1", "2", "3", "4"].map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={readAll} disabled={reading || counts.pending === 0}>
+                    {reading ? (parsePaused ? "Paused" : "Reading…") : "Read pending documents"}
+                  </Button>
+                </>
+              )}
+
               {reading ? (
                 <>
                   <Button variant="outline" onClick={() => setPaused(!parsePaused)}>
@@ -852,9 +1058,20 @@ function ArchivePage() {
           <Progress className="mt-5" value={reading ? livePercent : readPercent} />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-xs text-muted-foreground">
             <span>
-              {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
-              {Number(concurrency) * Number(chunkSize)} documents read at once.
+              {localProvider ? (
+                <>
+                  Reading with <span className="font-mono">{localProvider.models[0]}</span> on this
+                  computer via {localProvider.baseUrl} — {localLanes} at a time. Keep this tab open
+                  while it runs.
+                </>
+              ) : (
+                <>
+                  {concurrency} lanes × {chunkSize} files per chunk — up to{" "}
+                  {Number(concurrency) * Number(chunkSize)} documents read at once.
+                </>
+              )}
             </span>
+
             {reading ? (
               <span className="text-foreground">
                 {liveHandled.toLocaleString()} / {liveTotal.toLocaleString()} files ·{" "}

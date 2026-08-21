@@ -26,6 +26,7 @@ export type Database = {
           label: string
           model: string
           notes: string | null
+          run_location: string
           supports_pdf: boolean
           updated_at: string
         }
@@ -40,6 +41,7 @@ export type Database = {
           label: string
           model: string
           notes?: string | null
+          run_location?: string
           supports_pdf?: boolean
           updated_at?: string
         }
@@ -54,6 +56,7 @@ export type Database = {
           label?: string
           model?: string
           notes?: string | null
+          run_location?: string
           supports_pdf?: boolean
           updated_at?: string
         }

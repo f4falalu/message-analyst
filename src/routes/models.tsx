@@ -17,11 +17,14 @@ import { PROVIDER_PRESETS } from "@/lib/ai-models";
 import {
   activateAiProvider,
   deleteAiProvider,
+  discoverRemoteModels,
   listAiProviders,
   saveAiProvider,
   testAiProvider,
   type ProviderSummary,
 } from "@/lib/ai-settings.functions";
+import { checkLocalEndpoint, listLocalModels } from "@/lib/local-read";
+
 
 export const Route = createFileRoute("/models")({
   head: () => ({
@@ -54,6 +57,7 @@ const emptyForm = {
   apiKey: "",
   authStyle: "bearer",
   supportsPdf: true,
+  runLocation: "server" as "server" | "browser",
   notes: "",
 };
 
@@ -65,6 +69,9 @@ function ModelsPage() {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; ms: number }>>({});
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+
 
   const preset = useMemo(
     () => PROVIDER_PRESETS.find((p) => p.id === form.presetId) ?? PROVIDER_PRESETS[0]!,
@@ -89,13 +96,17 @@ function ModelsPage() {
   const choosePreset = (presetId: string) => {
     const next = PROVIDER_PRESETS.find((p) => p.id === presetId);
     if (!next) return;
+    // A preset pointing at localhost only makes sense as a browser-run model.
+    const local = /localhost|127\.0\.0\.1|\[::1\]/i.test(next.baseUrl);
+    setDiscovered([]);
     setForm((current) => ({
       ...current,
       presetId,
       label: current.id ? current.label : next.label.split(" (")[0] ?? next.label,
       baseUrl: next.baseUrl,
-      authStyle: next.authStyle,
+      authStyle: local ? "none" : next.authStyle,
       supportsPdf: next.supportsPdf,
+      runLocation: local ? "browser" : "server",
       model: next.models[0]?.id ?? "",
       fallbackModels: current.id
         ? current.fallbackModels
@@ -106,6 +117,7 @@ function ModelsPage() {
   const edit = (provider: ProviderSummary) => {
     const matched =
       PROVIDER_PRESETS.find((p) => p.baseUrl && provider.baseUrl.startsWith(p.baseUrl))?.id ?? "custom";
+    setDiscovered([]);
     setForm({
       id: provider.id,
       presetId: matched,
@@ -116,9 +128,46 @@ function ModelsPage() {
       apiKey: "",
       authStyle: provider.authStyle,
       supportsPdf: provider.supportsPdf,
+      runLocation: provider.runLocation === "browser" ? "browser" : "server",
       notes: provider.notes ?? "",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  /** Ask the endpoint which models it serves — locally from the tab, otherwise via the server. */
+  const fetchModels = async () => {
+    setDiscovering(true);
+    try {
+      const ids =
+        form.runLocation === "browser"
+          ? await listLocalModels(form.baseUrl)
+          : (await discoverRemoteModels({ data: { baseUrl: form.baseUrl, id: form.id, apiKey: form.apiKey || null } }))
+              .models;
+      setDiscovered(ids);
+      if (ids.length === 0) toast.info("That endpoint listed no models yet.");
+      else toast.success(`Found ${ids.length} model${ids.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not list models.");
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  /** Local endpoints can only be tested from the browser. */
+  const checkLocal = async () => {
+    setTesting(form.id ?? "local-form");
+    const result = await checkLocalEndpoint(form.baseUrl);
+    setResults((current) => ({
+      ...current,
+      [form.id ?? "local-form"]: { ok: result.ok, detail: result.detail, ms: 0 },
+    }));
+    if (result.ok) {
+      setDiscovered(result.models);
+      toast.success(result.detail);
+    } else {
+      toast.error(result.detail);
+    }
+    setTesting(null);
   };
 
   const save = async () => {
@@ -137,9 +186,11 @@ function ModelsPage() {
           apiKey: form.apiKey || null,
           authStyle: form.authStyle,
           supportsPdf: form.supportsPdf,
+          runLocation: form.runLocation,
           notes: form.notes || null,
         },
       });
+
       toast.success(form.id ? "Model updated." : "Model saved.");
       setForm(emptyForm);
       await load();
@@ -296,6 +347,79 @@ function ModelsPage() {
               </p>
             </div>
 
+            <div className="space-y-1.5">
+              <Label>Where it runs</Label>
+              <Select
+                value={form.runLocation}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    runLocation: value as "server" | "browser",
+                    ...(value === "browser" ? { authStyle: "none", apiKey: "" } : {}),
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="server">In the cloud (a hosted provider)</SelectItem>
+                  <SelectItem value="browser">This computer (Ollama, LM Studio, vLLM…)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {form.runLocation === "browser"
+                  ? "Reading happens in this browser tab, so it can reach a model on your own machine. Keep the tab open while a run is going, and allow this page in your model's CORS setting (Ollama: OLLAMA_ORIGINS=*)."
+                  : "Reading happens on the server. Use this for OpenRouter, Mistral and anything else with a public https address — including your own machine behind a tunnel."}
+              </p>
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={discovering || !form.baseUrl}
+                  onClick={() => void fetchModels()}
+                >
+                  {discovering ? "Looking…" : "Fetch available models"}
+                </Button>
+                {form.runLocation === "browser" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!form.baseUrl || testing !== null}
+                    onClick={() => void checkLocal()}
+                  >
+                    Check connection
+                  </Button>
+                ) : null}
+              </div>
+              {discovered.length > 0 ? (
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-border/60 p-2">
+                  {discovered.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="block w-full truncate rounded px-2 py-1 text-left font-mono text-xs text-foreground hover:bg-muted"
+                      onClick={() => setForm((current) => ({ ...current, model: id }))}
+                    >
+                      {id}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Pick one to use as the main model — anything you add to the backup list below is tried
+                after it. This is how the same setup follows you to another computer: point it at
+                whatever that machine is running and fetch its list.
+              </p>
+            </div>
+
+
+
 
             <div className="space-y-1.5">
               <Label>Model</Label>
@@ -419,6 +543,12 @@ function ModelsPage() {
                         Images only
                       </Badge>
                     ) : null}
+                    {provider.runLocation === "browser" ? (
+                      <Badge variant="outline" className="ml-2">
+                        On this computer
+                      </Badge>
+                    ) : null}
+
                   </p>
                   <p className="mt-1 font-mono text-xs text-muted-foreground">
                     {provider.model} · {provider.baseUrl}
