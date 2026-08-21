@@ -24,6 +24,8 @@ import {
   type LocalProviderInfo,
 } from "@/lib/local-read.functions";
 import { LocalDeferError, LocalUnreachableError, readWithLocalModel } from "@/lib/local-read";
+import { restoreCachedReads } from "@/lib/extraction-cache.functions";
+
 
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
