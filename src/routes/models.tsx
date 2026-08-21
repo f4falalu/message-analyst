@@ -17,11 +17,14 @@ import { PROVIDER_PRESETS } from "@/lib/ai-models";
 import {
   activateAiProvider,
   deleteAiProvider,
+  discoverRemoteModels,
   listAiProviders,
   saveAiProvider,
   testAiProvider,
   type ProviderSummary,
 } from "@/lib/ai-settings.functions";
+import { checkLocalEndpoint, listLocalModels } from "@/lib/local-read";
+
 
 export const Route = createFileRoute("/models")({
   head: () => ({
