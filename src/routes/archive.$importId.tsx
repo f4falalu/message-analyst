@@ -708,30 +708,54 @@ function ArchivePage() {
                   requeue: unreachable,
                 },
               });
-              if (deferred) setLiveDeferred((current) => current + 1);
+
+              // Automatic safety net: anything the machine here could not read
+              // (model error, endpoint down) is retried straight away on a
+              // hosted model — no settings to change.
+              let rescued = false;
+              let cloudModel: string | null = null;
+              if (!deferred) {
+                try {
+                  const cloud = await runOne({
+                    data: { attachmentId: job.attachmentId, runId, useCloudFallback: true },
+                  });
+                  rescued = cloud.ok;
+                  cloudModel = cloud.model;
+                } catch {
+                  rescued = false;
+                }
+              }
+
+              if (rescued) setLiveDone((current) => current + 1);
+              else if (deferred) setLiveDeferred((current) => current + 1);
               else if (!unreachable) setLiveFailed((current) => current + 1);
               setLiveFiles((current) =>
                 [
                   {
                     attachmentId: job.attachmentId,
                     filename: job.filename,
-                    outcome: unreachable ? "requeued" : deferred ? "deferred" : "error",
+                    outcome: rescued ? "done" : unreachable ? "requeued" : deferred ? "deferred" : "error",
                     confidence: null,
                     durationMs: Date.now() - startedAt,
-                    attempts: 1,
-                    error: message.slice(0, 300),
-                    model: null,
+                    attempts: rescued ? 2 : 1,
+                    error: rescued ? `Read in the cloud after: ${message.slice(0, 200)}` : message.slice(0, 300),
+                    model: cloudModel,
                   },
                   ...current,
                 ].slice(0, 40),
               );
               if (unreachable) {
                 stopped = true;
-                stopReason = "Local model unreachable";
-                toast.error(message);
+                stopReason = rescued ? "Local model unreachable — finished in the cloud" : "Local model unreachable";
+                toast.error(
+                  rescued
+                    ? `${message} That file was read in the cloud instead.`
+                    : message,
+                );
                 return;
               }
             }
+
           }
           void loadCounts();
         }
