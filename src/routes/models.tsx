@@ -54,6 +54,7 @@ const emptyForm = {
   apiKey: "",
   authStyle: "bearer",
   supportsPdf: true,
+  runLocation: "server" as "server" | "browser",
   notes: "",
 };
 
@@ -65,6 +66,9 @@ function ModelsPage() {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; ms: number }>>({});
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+
 
   const preset = useMemo(
     () => PROVIDER_PRESETS.find((p) => p.id === form.presetId) ?? PROVIDER_PRESETS[0]!,
