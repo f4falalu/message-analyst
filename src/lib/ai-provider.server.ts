@@ -15,7 +15,10 @@ export type ProviderConfig = {
   apiKey: string;
   authStyle: "bearer" | "lovable" | "x-api-key" | "none";
   supportsPdf: boolean;
+  /** "server" = read from Lovable's servers, "browser" = read on the user's machine. */
+  runLocation: "server" | "browser";
 };
+
 
 /**
  * A model that just hit a rate limit is parked for a while so other files in
@@ -61,6 +64,7 @@ export function lovableProvider(apiKey: string): ProviderConfig {
     apiKey,
     authStyle: "lovable",
     supportsPdf: true,
+    runLocation: "server",
   };
 }
 
@@ -73,9 +77,10 @@ type Row = {
   api_key: string | null;
   auth_style: string;
   supports_pdf: boolean;
+  run_location?: string | null;
 };
 
-function fromRow(row: Row): ProviderConfig {
+export function fromRow(row: Row): ProviderConfig {
   const style = row.auth_style;
   return {
     id: row.id,
@@ -87,7 +92,22 @@ function fromRow(row: Row): ProviderConfig {
     authStyle:
       style === "lovable" || style === "x-api-key" || style === "none" ? style : "bearer",
     supportsPdf: row.supports_pdf,
+    runLocation: row.run_location === "browser" ? "browser" : "server",
   };
+}
+
+export const PROVIDER_COLUMNS =
+  "id, label, base_url, model, fallback_models, api_key, auth_style, supports_pdf, run_location";
+
+/** Thrown when the active model only exists on the user's own machine. */
+export class LocalOnlyProviderError extends Error {
+  readonly localOnly = true;
+  constructor(label: string) {
+    super(
+      `"${label}" runs on your own computer, so it can only be used from the "Read on this computer" lane on the archive page.`,
+    );
+    this.name = "LocalOnlyProviderError";
+  }
 }
 
 /** The provider the next document read should use. */
@@ -103,12 +123,13 @@ export async function resolveAiProvider(supabase: {
 }): Promise<ProviderConfig> {
   const { data } = await supabase
     .from("ai_providers")
-    .select("id, label, base_url, model, fallback_models, api_key, auth_style, supports_pdf")
+    .select(PROVIDER_COLUMNS)
     .eq("is_active", true)
     .maybeSingle();
 
   if (data) {
     const config = fromRow(data as Row);
+    if (config.runLocation === "browser") throw new LocalOnlyProviderError(config.label);
     if (config.authStyle === "none" || config.apiKey) return config;
   }
 
@@ -120,6 +141,7 @@ export async function resolveAiProvider(supabase: {
   }
   return lovableProvider(key);
 }
+
 
 export function providerHeaders(provider: ProviderConfig): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
