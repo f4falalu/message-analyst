@@ -142,6 +142,50 @@ export async function resolveAiProvider(supabase: {
   return lovableProvider(key);
 }
 
+/**
+ * A provider that Lovable's servers *can* reach. Used as the automatic safety
+ * net when a read on the user's own machine fails: the same file is retried in
+ * the cloud without anyone changing settings. Preference order: the active
+ * cloud provider, then any saved cloud provider with a key (OpenRouter first),
+ * then built-in Lovable AI.
+ */
+export async function resolveCloudProvider(supabase: {
+  from: (table: "ai_providers") => {
+    select: (cols: string) => {
+      order: (
+        col: string,
+        opts: { ascending: boolean },
+      ) => Promise<{ data: unknown; error: unknown }>;
+    };
+  };
+}): Promise<ProviderConfig> {
+  const { data } = await supabase
+    .from("ai_providers")
+    .select(`${PROVIDER_COLUMNS}, is_active`)
+    .order("updated_at", { ascending: false });
+
+  const rows = (Array.isArray(data) ? data : []) as (Row & { is_active?: boolean })[];
+  const usable = rows
+    .map((row) => ({ row, config: fromRow(row) }))
+    .filter(({ config }) => config.runLocation === "server")
+    .filter(({ config }) => config.authStyle === "none" || config.apiKey.length > 0);
+
+  const pick =
+    usable.find(({ row }) => row.is_active) ??
+    usable.find(({ config }) => config.baseUrl.includes("openrouter.ai")) ??
+    usable[0];
+  if (pick) return pick.config;
+
+  const key = process.env["LOVABLE_API_KEY"];
+  if (!key) {
+    throw new Error(
+      "No cloud model is available as a fallback. Add an OpenRouter (or other hosted) key under Models.",
+    );
+  }
+  return lovableProvider(key);
+}
+
+
 
 export function providerHeaders(provider: ProviderConfig): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
