@@ -23,7 +23,7 @@ import {
   testAiProvider,
   type ProviderSummary,
 } from "@/lib/ai-settings.functions";
-import { checkLocalEndpoint, listLocalModels } from "@/lib/local-read";
+import { checkLocalEndpoint, isVisionModel, listLocalModels, pullOllamaModel } from "@/lib/local-read";
 
 
 export const Route = createFileRoute("/models")({
@@ -71,6 +71,9 @@ function ModelsPage() {
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; ms: number }>>({});
   const [discovered, setDiscovered] = useState<string[]>([]);
   const [discovering, setDiscovering] = useState(false);
+  const [pullInput, setPullInput] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
 
 
   const preset = useMemo(
@@ -153,7 +156,10 @@ function ModelsPage() {
     }
   };
 
-  /** Local endpoints can only be tested from the browser. */
+  /**
+   * Local endpoints can only be tested from the browser: is it up, and does it
+   * serve something that can actually read a scan?
+   */
   const checkLocal = async () => {
     setTesting(form.id ?? "local-form");
     const result = await checkLocalEndpoint(form.baseUrl);
@@ -161,14 +167,33 @@ function ModelsPage() {
       ...current,
       [form.id ?? "local-form"]: { ok: result.ok, detail: result.detail, ms: 0 },
     }));
-    if (result.ok) {
-      setDiscovered(result.models);
-      toast.success(result.detail);
-    } else {
-      toast.error(result.detail);
-    }
+    if (result.models.length > 0) setDiscovered(result.models);
+    if (result.ok) toast.success(result.detail);
+    else toast.error(result.detail);
     setTesting(null);
   };
+
+  /** Pull an Ollama tag onto this machine and pin that exact version. */
+  const pullTag = async () => {
+    const tag = pullInput.trim();
+    if (!tag) return;
+    setPulling(true);
+    setPullStatus("starting…");
+    try {
+      const pinned = await pullOllamaModel(form.baseUrl, tag, (line) => setPullStatus(line));
+      setForm((current) => ({ ...current, model: pinned }));
+      setDiscovered(await listLocalModels(form.baseUrl));
+      setPullStatus(`Pinned ${pinned}`);
+      toast.success(`Pulled and pinned ${pinned}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not pull that model.";
+      setPullStatus(message);
+      toast.error(message);
+    } finally {
+      setPulling(false);
+    }
+  };
+
 
   const save = async () => {
     setBusy(true);
@@ -393,30 +418,96 @@ function ModelsPage() {
                     disabled={!form.baseUrl || testing !== null}
                     onClick={() => void checkLocal()}
                   >
-                    Check connection
+                    {testing ? "Testing…" : "Test endpoint"}
                   </Button>
                 ) : null}
               </div>
+              {form.runLocation === "browser" && results[form.id ?? "local-form"] ? (
+                <p
+                  className={`text-xs ${
+                    results[form.id ?? "local-form"]!.ok ? "text-muted-foreground" : "text-destructive"
+                  }`}
+                >
+                  {results[form.id ?? "local-form"]!.ok ? "Ready · " : "Not ready · "}
+                  {results[form.id ?? "local-form"]!.detail}
+                </p>
+              ) : null}
               {discovered.length > 0 ? (
                 <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-border/60 p-2">
                   {discovered.map((id) => (
                     <button
                       key={id}
                       type="button"
-                      className="block w-full truncate rounded px-2 py-1 text-left font-mono text-xs text-foreground hover:bg-muted"
+                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left font-mono text-xs text-foreground hover:bg-muted"
                       onClick={() => setForm((current) => ({ ...current, model: id }))}
                     >
-                      {id}
+                      <span className="truncate">{id}</span>
+                      <span className="shrink-0">
+                        {isVisionModel(id) ? (
+                          <Badge variant="outline">reads scans</Badge>
+                        ) : (
+                          <Badge variant="outline" className="opacity-60">
+                            text only
+                          </Badge>
+                        )}
+                        {form.model === id ? <Badge className="ml-1">pinned</Badge> : null}
+                      </span>
                     </button>
                   ))}
                 </div>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                Pick one to use as the main model — anything you add to the backup list below is tried
-                after it. This is how the same setup follows you to another computer: point it at
-                whatever that machine is running and fetch its list.
+                "Test endpoint" checks the address answers and that at least one model there can read a
+                picture, before you start a run. Click a tag to pin that exact version as the model used
+                for reading — anything in the backup list below is tried after it. This is how the same
+                setup follows you to another computer: point it at whatever that machine is running and
+                fetch its list.
               </p>
             </div>
+
+            {form.runLocation === "browser" ? (
+              <div className="space-y-1.5 md:col-span-2 rounded-md border border-border/60 p-3">
+                <Label>Pull an Ollama model tag</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Input
+                    className="max-w-xs font-mono text-xs"
+                    value={pullInput}
+                    placeholder="qwen2.5vl:7b"
+                    onChange={(e) => setPullInput(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={pulling || !pullInput.trim() || !form.baseUrl}
+                    onClick={() => void pullTag()}
+                  >
+                    {pulling ? "Pulling…" : "Pull & pin"}
+                  </Button>
+                  {["qwen2.5vl:7b", "llama3.2-vision:11b", "minicpm-v:8b"].map((tag) => (
+                    <Button
+                      key={tag}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="font-mono text-xs"
+                      onClick={() => setPullInput(tag)}
+                    >
+                      {tag}
+                    </Button>
+                  ))}
+                </div>
+                {pullStatus ? (
+                  <p className="font-mono text-xs text-muted-foreground">{pullStatus}</p>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  Downloads the tag onto this machine through Ollama and pins that exact version
+                  (e.g. <span className="font-mono">qwen2.5vl:7b</span>, never a moving "latest"), so
+                  every page is read by the same model.
+                </p>
+              </div>
+            ) : null}
+
 
 
 

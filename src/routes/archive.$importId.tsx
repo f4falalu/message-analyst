@@ -24,6 +24,8 @@ import {
   type LocalProviderInfo,
 } from "@/lib/local-read.functions";
 import { LocalDeferError, LocalUnreachableError, readWithLocalModel } from "@/lib/local-read";
+import { restoreCachedReads } from "@/lib/extraction-cache.functions";
+
 
 import type { Issue } from "@/lib/data-rules";
 import { exportRecordsToXlsx } from "@/lib/export-xlsx";
@@ -266,7 +268,9 @@ function ArchivePage() {
   const fetchReport = useServerFn(getUnmatchedReport);
   const fetchEvidence = useServerFn(getRecordEvidence);
 
+  const restoreCache = useServerFn(restoreCachedReads);
   const claimLocal = useServerFn(claimLocalBatch);
+
   const storeLocal = useServerFn(saveLocalRead);
   const loadLocalProvider = useServerFn(getLocalProvider);
   const [localProvider, setLocalProvider] = useState<LocalProviderInfo | null>(null);
@@ -493,6 +497,28 @@ function ArchivePage() {
     }
   };
 
+  /**
+   * Anything read in an earlier pass (same file name and size) is filled in
+   * from the saved results, so a stop-and-restart only pays for what is
+   * genuinely missing. Runs before every read, and on demand from the button.
+   */
+  const skipAlreadyRead = async (announce = false): Promise<number> => {
+    try {
+      const { restored } = await restoreCache({ data: { importId } });
+      if (restored > 0) {
+        toast.success(`${restored.toLocaleString()} file(s) restored from earlier reads — not read again.`);
+        void loadCounts();
+        void refreshFiles();
+      } else if (announce) {
+        toast.info("Nothing to restore — no waiting file has been read before.");
+      }
+      return restored;
+    } catch (error) {
+      if (announce) toast.error(error instanceof Error ? error.message : "Could not check earlier reads.");
+      return 0;
+    }
+  };
+
   const readAll = async () => {
     setPaused(false);
     parseStoppedRef.current = false;
@@ -502,7 +528,9 @@ function ArchivePage() {
     setLiveFailed(0);
     setLiveDeferred(0);
     setLiveStart(Date.now());
+    await skipAlreadyRead();
     const lanes = Number(concurrency);
+
     const chunk = Number(chunkSize);
     let runId: string | null = null;
     let stopped = false;
@@ -623,7 +651,9 @@ function ArchivePage() {
     setLiveFailed(0);
     setLiveDeferred(0);
     setLiveStart(Date.now());
+    await skipAlreadyRead();
     const lanes = Math.max(1, Number(localLanes));
+
     let runId: string | null = null;
     let stopped = false;
     let stopReason: string | null = null;
@@ -708,30 +738,54 @@ function ArchivePage() {
                   requeue: unreachable,
                 },
               });
-              if (deferred) setLiveDeferred((current) => current + 1);
+
+              // Automatic safety net: anything the machine here could not read
+              // (model error, endpoint down) is retried straight away on a
+              // hosted model — no settings to change.
+              let rescued = false;
+              let cloudModel: string | null = null;
+              if (!deferred) {
+                try {
+                  const cloud = await runOne({
+                    data: { attachmentId: job.attachmentId, runId, useCloudFallback: true },
+                  });
+                  rescued = cloud.ok;
+                  cloudModel = cloud.model;
+                } catch {
+                  rescued = false;
+                }
+              }
+
+              if (rescued) setLiveDone((current) => current + 1);
+              else if (deferred) setLiveDeferred((current) => current + 1);
               else if (!unreachable) setLiveFailed((current) => current + 1);
               setLiveFiles((current) =>
                 [
                   {
                     attachmentId: job.attachmentId,
                     filename: job.filename,
-                    outcome: unreachable ? "requeued" : deferred ? "deferred" : "error",
+                    outcome: rescued ? "done" : unreachable ? "requeued" : deferred ? "deferred" : "error",
                     confidence: null,
                     durationMs: Date.now() - startedAt,
-                    attempts: 1,
-                    error: message.slice(0, 300),
-                    model: null,
+                    attempts: rescued ? 2 : 1,
+                    error: rescued ? `Read in the cloud after: ${message.slice(0, 200)}` : message.slice(0, 300),
+                    model: cloudModel,
                   },
                   ...current,
                 ].slice(0, 40),
               );
               if (unreachable) {
                 stopped = true;
-                stopReason = "Local model unreachable";
-                toast.error(message);
+                stopReason = rescued ? "Local model unreachable — finished in the cloud" : "Local model unreachable";
+                toast.error(
+                  rescued
+                    ? `${message} That file was read in the cloud instead.`
+                    : message,
+                );
                 return;
               }
             }
+
           }
           void loadCounts();
         }
@@ -1049,6 +1103,12 @@ function ArchivePage() {
                   Retry failed
                 </Button>
               ) : null}
+              {counts.pending + counts.error + counts.deferred > 0 ? (
+                <Button variant="outline" onClick={() => void skipAlreadyRead(true)} disabled={reading}>
+                  Skip already-read files
+                </Button>
+              ) : null}
+
 
               <Button variant="secondary" onClick={build} disabled={building || counts.done === 0}>
                 {building ? "Building…" : "Build ledger"}
@@ -1062,7 +1122,9 @@ function ArchivePage() {
                 <>
                   Reading with <span className="font-mono">{localProvider.models[0]}</span> on this
                   computer via {localProvider.baseUrl} — {localLanes} at a time. Keep this tab open
-                  while it runs.
+                  while it runs. Anything this computer cannot read is retried in the cloud
+                  automatically.
+
                 </>
               ) : (
                 <>
