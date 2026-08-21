@@ -23,7 +23,7 @@ import {
   testAiProvider,
   type ProviderSummary,
 } from "@/lib/ai-settings.functions";
-import { checkLocalEndpoint, listLocalModels } from "@/lib/local-read";
+import { checkLocalEndpoint, isVisionModel, listLocalModels, pullOllamaModel } from "@/lib/local-read";
 
 
 export const Route = createFileRoute("/models")({
