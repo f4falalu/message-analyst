@@ -1122,7 +1122,9 @@ function ArchivePage() {
                 <>
                   Reading with <span className="font-mono">{localProvider.models[0]}</span> on this
                   computer via {localProvider.baseUrl} — {localLanes} at a time. Keep this tab open
-                  while it runs.
+                  while it runs. Anything this computer cannot read is retried in the cloud
+                  automatically.
+
                 </>
               ) : (
                 <>
