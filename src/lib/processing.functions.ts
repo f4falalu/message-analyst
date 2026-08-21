@@ -379,20 +379,28 @@ export const processAttachmentBatch = createServerFn({ method: "POST" })
   });
 
 export const reprocessAttachment = createServerFn({ method: "POST" })
-  .inputValidator((input: { attachmentId: string; runId?: string | null }) => ({
-    attachmentId: String(input.attachmentId),
-    runId: input.runId ? String(input.runId) : null,
-  }))
+  .inputValidator(
+    (input: { attachmentId: string; runId?: string | null; useCloudFallback?: boolean }) => ({
+      attachmentId: String(input.attachmentId),
+      runId: input.runId ? String(input.runId) : null,
+      // Set by the "read on this computer" lane when a local read fails: the
+      // same file is retried on a hosted model with no reconfiguration.
+      useCloudFallback: Boolean(input.useCloudFallback),
+    }),
+  )
   .handler(async ({ data }) => {
     const { supabaseAdmin: supabase } = await import("@/integrations/supabase/client.server");
-    const { resolveAiProvider } = await import("./ai-provider.server");
-    const provider = await resolveAiProvider(supabase as never);
+    const { resolveAiProvider, resolveCloudProvider } = await import("./ai-provider.server");
+    const provider = data.useCloudFallback
+      ? await resolveCloudProvider(supabase as never)
+      : await resolveAiProvider(supabase as never);
 
     const { data: attachment, error } = await supabase
       .from("attachments")
-      .select("id, import_id, filename, storage_path, mime_type, message_seq")
+      .select("id, import_id, filename, storage_path, mime_type, message_seq, size_bytes")
       .eq("id", data.attachmentId)
       .maybeSingle();
+
     if (error) throw new Error(error.message);
     if (!attachment) throw new Error("That file is no longer in the archive.");
 
