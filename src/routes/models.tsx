@@ -543,6 +543,12 @@ function ModelsPage() {
                         Images only
                       </Badge>
                     ) : null}
+                    {provider.runLocation === "browser" ? (
+                      <Badge variant="outline" className="ml-2">
+                        On this computer
+                      </Badge>
+                    ) : null}
+
                   </p>
                   <p className="mt-1 font-mono text-xs text-muted-foreground">
                     {provider.model} · {provider.baseUrl}
