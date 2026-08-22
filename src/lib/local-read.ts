@@ -36,7 +36,7 @@ export class LocalDeferError extends Error {
 }
 
 const MAX_LOCAL_BYTES = 20 * 1024 * 1024;
-const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 3_300_000;
+const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 700_000;
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -350,6 +350,83 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
   throw new LocalDeferError("The image could not be prepared for the local model.");
 }
 
+function mergePageExtractions(pages: ExtractedDoc[]): ExtractedDoc {
+  const firstString = (key: keyof ExtractedDoc): string | null => {
+    for (const page of pages) {
+      const value = page[key];
+      if (typeof value === "string" && value.trim()) return value;
+    }
+    return null;
+  };
+  const lastNumber = (key: "total_amount"): number | null => {
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+      const value = pages[index]?.[key];
+      if (typeof value === "number") return value;
+    }
+    return null;
+  };
+  const confidenceFor = (key: keyof ExtractedDoc["field_confidence"]): number | null => {
+    const values = pages
+      .map((page) => page.field_confidence[key])
+      .filter((value): value is number => typeof value === "number");
+    return values.length > 0 ? Math.max(...values) : null;
+  };
+  const type = pages.find((page) => page.doc_type !== "other")?.doc_type ?? "other";
+
+  return {
+    doc_type: type,
+    facility_name: firstString("facility_name"),
+    items: pages.flatMap((page) => page.items),
+    total_amount: lastNumber("total_amount"),
+    currency: firstString("currency"),
+    document_date: firstString("document_date"),
+    payment_date: firstString("payment_date"),
+    contact_name: firstString("contact_name"),
+    contact_phone: firstString("contact_phone"),
+    reference: firstString("reference"),
+    raw_text: pages
+      .map((page, index) => `Page ${index + 1}\n${page.raw_text}`)
+      .join("\n\n")
+      .slice(0, 8000),
+    confidence: pages.reduce((sum, page) => sum + page.confidence, 0) / pages.length,
+    field_confidence: {
+      facility_name: confidenceFor("facility_name"),
+      items: confidenceFor("items"),
+      total_amount: confidenceFor("total_amount"),
+      document_date: confidenceFor("document_date"),
+      payment_date: confidenceFor("payment_date"),
+      contact: confidenceFor("contact"),
+    },
+  };
+}
+
+async function readMediaBlock(
+  base: string,
+  model: string,
+  userText: string,
+  mediaBlock: Record<string, unknown>,
+): Promise<{ extracted: ExtractedDoc; model: string }> {
+  let response: Response;
+  try {
+    response = await fetchApi(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
+    });
+  } catch (error) {
+    throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
+  }
+  if (!response.ok) throw await responseError(response);
+
+  const payload = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+    model?: string;
+  };
+  const content = payload.choices?.[0]?.message?.content ?? "";
+  if (!content) throw new Error(`${model} returned an empty response.`);
+  return { extracted: normalise(parseJsonLoose(content)), model: payload.model || model };
+}
+
 /** Read one document with the model running on this machine. */
 export async function readWithLocalModel(
   provider: Pick<LocalProviderInfo, "baseUrl" | "models" | "supportsPdf">,
@@ -364,38 +441,34 @@ export async function readWithLocalModel(
   let lastError: Error | null = null;
 
   for (let index = 0; index < order.length; index += 1) {
-    const model = order[index]!;
+    const model = order[index];
+    if (!model) continue;
     const isLast = index === order.length - 1;
-    let response: Response;
     try {
-      response = await fetchApi(`${base}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildChatBody({ model, userText, mediaBlocks })),
-      });
+      // Sending all rendered PDF pages as base64 in one POST exceeds the
+      // hosted preview's request ceiling. Read pages sequentially, then merge
+      // their structured output into one attachment result.
+      const pageResults: ExtractedDoc[] = [];
+      let usedModel = model;
+      for (const mediaBlock of mediaBlocks) {
+        const result = await readMediaBlock(base, model, userText, mediaBlock);
+        pageResults.push(result.extracted);
+        usedModel = result.model;
+      }
+      const firstPage = pageResults[0];
+      if (!firstPage) throw new Error("The document had no readable image pages.");
+      return {
+        extracted: pageResults.length === 1 ? firstPage : mergePageExtractions(pageResults),
+        model: usedModel,
+      };
     } catch (error) {
-      // A local endpoint that does not answer is a setup problem, not a bad file.
-      throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
-    }
-
-    if (!response.ok) {
-      const failure = await responseError(response);
-      lastError = new Error(`Local model failed [${response.status}] on ${model}: ${failure.message}`);
+      if (error instanceof LocalUnreachableError) throw error;
+      lastError = new Error(
+        `Local model failed on ${model}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
       if (!isLast) continue;
       throw lastError;
     }
-
-    const payload = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-      model?: string;
-    };
-    const content = payload.choices?.[0]?.message?.content ?? "";
-    if (!content) {
-      lastError = new Error(`${model} returned an empty response.`);
-      if (!isLast) continue;
-      throw lastError;
-    }
-    return { extracted: normalise(parseJsonLoose(content)), model: payload.model || model };
   }
 
   throw lastError ?? new Error("The document could not be read on this computer.");

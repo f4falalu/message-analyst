@@ -652,7 +652,10 @@ function ArchivePage() {
     setLiveDeferred(0);
     setLiveStart(Date.now());
     await skipAlreadyRead();
-    const lanes = Math.max(1, Number(localLanes));
+    // Ollama serves one large vision inference reliably at a time on typical
+    // local hardware. Parallel browser lanes compete for RAM/VRAM and can leave
+    // every request hanging until the relay times out.
+    const lanes = 1;
 
     let runId: string | null = null;
     let stopped = false;

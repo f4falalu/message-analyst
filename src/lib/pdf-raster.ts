@@ -6,9 +6,11 @@
 // pictures instead.
 
 const MAX_PAGES = 3;
-const TARGET_WIDTH = 900;
-const JPEG_QUALITY = 0.58;
-const MAX_PAGE_DATA_URL_CHARS = 1_100_000;
+const TARGET_WIDTH = 820;
+const JPEG_QUALITY = 0.52;
+// Each PDF page is sent in its own request. Keep enough headroom for the
+// extraction prompt and chat context so the preview ingress accepts the POST.
+const MAX_PAGE_DATA_URL_CHARS = 700_000;
 
 type PdfModule = typeof import("pdfjs-dist");
 
