@@ -39,9 +39,10 @@ const MAX_LOCAL_BYTES = 60 * 1024 * 1024;
 // The hosting ingress sits in front of the relay route and rejects oversized
 // JSON before route code runs. This leaves room for prompt/context JSON too.
 const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 560_000;
-// Pages of one document are read a few at a time: fast without overwhelming a
-// single local runtime, which serialises inference anyway.
-const PAGE_CONCURRENCY = 3;
+// Ollama normally serialises inference. Multiple simultaneous vision requests
+// increase memory pressure and can make the tunnel look unresponsive, so keep
+// one document page in flight while still processing the whole document.
+const PAGE_CONCURRENCY = 1;
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -93,6 +94,23 @@ function isInterstitial(res: Response): boolean {
 async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
   const parsed = new URL(url);
   if (/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)) {
+    // Prefer the browser-to-ngrok path. Vision inference can take longer than
+    // the hosted relay request lifetime, which otherwise produces an HTML 502
+    // even though Ollama is still working. A correctly configured Ollama/ngrok
+    // endpoint permits this request through CORS.
+    try {
+      const direct = await fetch(url, {
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string> | undefined),
+          "ngrok-skip-browser-warning": "true",
+        },
+      });
+      if (!isInterstitial(direct)) return direct;
+    } catch {
+      // Older Ollama setups may still reject the browser preflight. Preserve
+      // the bounded server relay as a compatibility fallback for those users.
+    }
     return fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
   }
   const res = await fetch(url, init);
@@ -413,23 +431,46 @@ async function readMediaBlock(
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   let response: Response;
   try {
+    const body = buildChatBody({ model, userText, mediaBlock });
     response = await fetchApi(`${base}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
+      // Ollama emits incremental chunks as it generates. Streaming lets the
+      // relay return response headers/data before the hosting request deadline
+      // instead of waiting silently for the complete vision result.
+      body: JSON.stringify({ ...body, stream: true }),
     });
   } catch (error) {
     throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
   }
   if (!response.ok) throw await responseError(response);
 
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-    model?: string;
-  };
-  const content = payload.choices?.[0]?.message?.content ?? "";
+  const raw = await response.text();
+  let content = "";
+  let responseModel = model;
+  const chunks = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const chunk of chunks) {
+    const json = chunk.startsWith("data:") ? chunk.slice(5).trim() : chunk;
+    if (!json || json === "[DONE]") continue;
+    try {
+      const payload = JSON.parse(json) as {
+        choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+        message?: { content?: string };
+        model?: string;
+      };
+      responseModel = payload.model || responseModel;
+      content +=
+        payload.choices?.[0]?.delta?.content ??
+        payload.choices?.[0]?.message?.content ??
+        payload.message?.content ??
+        "";
+    } catch {
+      // Ignore transport keepalive lines; malformed model output is handled by
+      // parseJsonLoose after all valid chunks have been assembled.
+    }
+  }
   if (!content) throw new Error(`${model} returned an empty response.`);
-  return { extracted: normalise(parseJsonLoose(content)), model: payload.model || model };
+  return { extracted: normalise(parseJsonLoose(content)), model: responseModel };
 }
 
 /** Read one document with the model running on this machine. */
