@@ -104,7 +104,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
       // Ollama's own listing lives outside the /v1 compatibility path.
       const root = base.replace(/\/v1$/, "");
       try {
-        const res = await fetch(`${root}/api/tags`);
+        const res = await fetch(`${root}/api/tags`, { headers: tunnelHeaders(base) });
         if (res.ok) {
           const payload = (await res.json()) as { models?: { name?: string }[] };
           for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
