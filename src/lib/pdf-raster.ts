@@ -5,12 +5,15 @@
 // "invalid message format". So the tab renders the pages itself and sends
 // pictures instead.
 
-const MAX_PAGES = 3;
-const TARGET_WIDTH = 820;
-const JPEG_QUALITY = 0.52;
-// Each PDF page is sent in its own request. Keep enough headroom for the
-// extraction prompt and chat context so the preview ingress accepts the POST.
-const MAX_PAGE_DATA_URL_CHARS = 700_000;
+const MAX_PAGES = 20;
+const TARGET_WIDTH = 1240;
+const JPEG_QUALITY = 0.72;
+// Each PDF page is sent in its own request, so the budget per page is the
+// relay ceiling (8 MB) minus prompt/context headroom. Base64 inflates bytes by
+// ~4/3, so ~2.6M characters stays comfortably inside it while keeping enough
+// resolution for hand-written scans to stay legible.
+const MAX_PAGE_DATA_URL_CHARS = 2_600_000;
+
 
 type PdfModule = typeof import("pdfjs-dist");
 
