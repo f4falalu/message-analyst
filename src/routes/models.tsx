@@ -466,12 +466,25 @@ function ModelsPage() {
                 </div>
               ) : null}
               {form.runLocation === "browser" && /ngrok-free\.(app|dev)/i.test(form.baseUrl) ? (
-                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
-                  If ngrok shows <code>OPTIONS /models 403</code>, restart it with host rewriting enabled: stop the current
-                  tunnel with <code>Ctrl+C</code>, then run <code>ngrok http 11434 --host-header=localhost:11434</code>.
-                  Keep this Base URL and test again after ngrok prints its new forwarding address.
+                <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  <p>
+                    Seeing <code>OPTIONS /models 403</code> in the ngrok log? That 403 comes from Ollama rejecting the
+                    tunnel host and origin. Fix both on your machine, in this order:
+                  </p>
+                  <ol className="ml-4 list-decimal space-y-1">
+                    <li>
+                      Stop Ollama, then restart it so it accepts this page:{" "}
+                      <code>OLLAMA_HOST=0.0.0.0:11434 OLLAMA_ORIGINS="*" ollama serve</code>
+                    </li>
+                    <li>
+                      Stop ngrok (<code>Ctrl+C</code>) and restart it with host rewriting:{" "}
+                      <code>ngrok http 11434 --host-header=localhost:11434</code>
+                    </li>
+                    <li>Paste the printed https URL here with <code>/v1</code> on the end and test again.</li>
+                  </ol>
                 </div>
               ) : null}
+
 
               {discovered.length > 0 ? (
                 <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-border/60 p-2">
