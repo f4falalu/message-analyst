@@ -271,13 +271,8 @@ export async function pullOllamaModel(
 }
 
 
-async function mediaBlockFor(job: LocalJob, supportsPdf: boolean): Promise<Record<string, unknown>> {
+async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]> {
   const isPdf = (job.mimeType ?? "") === "application/pdf";
-  if (isPdf && !supportsPdf) {
-    throw new LocalDeferError(
-      "This local model is set up for images only, so the PDF has not been read yet. Use a PDF-capable model (or the cloud lane) and queue it again.",
-    );
-  }
 
   let res: Response;
   try {
