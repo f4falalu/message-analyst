@@ -299,7 +299,7 @@ export async function readWithLocalModel(
     try {
       response = await fetch(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...tunnelHeaders(base) },
         body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
       });
     } catch (error) {
