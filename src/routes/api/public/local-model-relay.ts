@@ -35,8 +35,16 @@ async function relay(request: Request): Promise<Response> {
       body,
       redirect: "error",
     });
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (contentType.includes("text/html")) {
+      const code = upstream.headers.get("ngrok-error-code");
+      const detail = code === "ERR_NGROK_3200"
+        ? "The ngrok tunnel is offline. Keep its terminal window open and start it again."
+        : `ngrok returned its browser page instead of Ollama${code ? ` (${code})` : ""}.`;
+      return Response.json({ error: detail }, { status: 502 });
+    }
     const responseHeaders = new Headers();
-    responseHeaders.set("content-type", upstream.headers.get("content-type") ?? "application/json");
+    responseHeaders.set("content-type", contentType || "application/json");
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   } catch (error) {
     return Response.json(

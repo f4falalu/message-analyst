@@ -98,6 +98,17 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
   return retry;
 }
 
+async function responseError(res: Response): Promise<Error> {
+  const text = await res.text();
+  try {
+    const payload = JSON.parse(text) as { error?: string };
+    if (payload.error) return new Error(payload.error);
+  } catch {
+    // Preserve the status fallback when an endpoint returns non-JSON text.
+  }
+  return new Error(`Endpoint returned ${res.status}${text ? `: ${text.slice(0, 180)}` : ""}`);
+}
+
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
 export async function listLocalModels(baseUrl: string): Promise<string[]> {
   const ids: string[] = [];
@@ -109,7 +120,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
       if (res.ok) {
         const payload = (await res.json()) as { data?: { id?: string }[] };
         for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
-      }
+      } else lastError = await responseError(res);
     } catch (error) {
       lastError = error;
     }
@@ -121,7 +132,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
         if (res.ok) {
           const payload = (await res.json()) as { models?: { name?: string }[] };
           for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
-        }
+        } else lastError = await responseError(res);
       } catch (error) {
         lastError = error;
       }
