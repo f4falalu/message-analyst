@@ -453,7 +453,7 @@ function ModelsPage() {
                       <code>ngrok config add-authtoken {"<YOUR_TOKEN>"}</code>
                     </li>
                     <li>
-                      Start it: <code>ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"</code>
+                      Start it: <code>ngrok http 11434 --host-header=localhost:11434</code>
                     </li>
                     <li>
                       Paste the printed URL here as <code>https://{"<your-id>"}.ngrok-free.app/v1</code>
@@ -469,17 +469,15 @@ function ModelsPage() {
               {form.runLocation === "browser" && /ngrok-free\.(app|dev)/i.test(form.baseUrl) ? (
                 <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
                   <p>
-                    Seeing <code>OPTIONS /models 403</code> in the ngrok log? That 403 comes from Ollama rejecting the
-                    tunnel host and origin. Fix both on your machine, in this order:
+                    The app routes ngrok requests through a same-origin relay, so ngrok's browser warning and CORS
+                    preflight no longer block the connection. Keep Ollama and this ngrok session running:
                   </p>
                   <ol className="ml-4 list-decimal space-y-1">
                     <li>
-                      Stop Ollama, then restart it so it accepts this page:{" "}
-                      <code>OLLAMA_HOST=0.0.0.0:11434 OLLAMA_ORIGINS="*" ollama serve</code>
+                      Ollama: <code>OLLAMA_HOST=0.0.0.0:11434 OLLAMA_ORIGINS="*" ollama serve</code>
                     </li>
                     <li>
-                      Stop ngrok (<code>Ctrl+C</code>) and restart it with host rewriting:{" "}
-                      <code>ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"</code>
+                      ngrok: <code>ngrok http 11434 --host-header=localhost:11434</code>
                     </li>
                     <li>Paste the printed https URL here with <code>/v1</code> on the end and test again.</li>
                   </ol>
