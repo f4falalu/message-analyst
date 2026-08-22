@@ -68,19 +68,12 @@ function candidateBases(baseUrl: string): string[] {
   return out;
 }
 
-/**
- * ngrok's free tier answers browser requests with an HTML interstitial unless the
- * `ngrok-skip-browser-warning` header is present. That header is not CORS-safelisted,
- * so sending it forces a preflight that Ollama rejects (its allow-headers list has no
- * such entry). Strategy: send nothing first (simple request, always allowed); if the
- * tunnel hands back the HTML warning page, retry once with the header.
- */
+/** ngrok's free tier can serve a browser warning page in place of the API. */
 export class TunnelInterstitialError extends Error {
   constructor(base: string) {
     super(
       `The tunnel at ${base} returned ngrok's browser warning page instead of the model API. ` +
-        `Restart ngrok so it allows the skip header through: ` +
-        `ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"`,
+        `The app could not bypass ngrok's browser warning page.`,
     );
     this.name = "TunnelInterstitialError";
   }
@@ -91,6 +84,10 @@ function isInterstitial(res: Response): boolean {
 }
 
 async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
+  const parsed = new URL(url);
+  if (/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)) {
+    return fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
+  }
   const res = await fetch(url, init);
   if (!isInterstitial(res)) return res;
   const retry = await fetch(url, {
