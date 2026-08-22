@@ -12,6 +12,7 @@ import {
   userTextFor,
   type ExtractedDoc,
 } from "./doc-extract";
+import { pdfToImageDataUrls } from "./pdf-raster";
 import type { LocalJob, LocalProviderInfo } from "./local-read.functions";
 
 /** The endpoint could not be reached at all — the file stays "waiting". */
@@ -271,13 +272,8 @@ export async function pullOllamaModel(
 }
 
 
-async function mediaBlockFor(job: LocalJob, supportsPdf: boolean): Promise<Record<string, unknown>> {
+async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]> {
   const isPdf = (job.mimeType ?? "") === "application/pdf";
-  if (isPdf && !supportsPdf) {
-    throw new LocalDeferError(
-      "This local model is set up for images only, so the PDF has not been read yet. Use a PDF-capable model (or the cloud lane) and queue it again.",
-    );
-  }
 
   let res: Response;
   try {
@@ -294,16 +290,25 @@ async function mediaBlockFor(job: LocalJob, supportsPdf: boolean): Promise<Recor
       `File is larger than the local reading limit (${(bytes.length / 1024 / 1024).toFixed(1)} MB). Held back — it has not been read yet.`,
     );
   }
-  const base64 = bytesToBase64(bytes);
-
   if (isPdf) {
-    return {
-      type: "file",
-      file: { filename: job.filename, file_data: `data:application/pdf;base64,${base64}` },
-    };
+    // Local runtimes reject PDF attachments outright ("invalid message
+    // format"), so the tab renders the pages and sends pictures instead.
+    let pages: string[];
+    try {
+      pages = await pdfToImageDataUrls(bytes);
+    } catch (error) {
+      throw new LocalDeferError(
+        `The PDF could not be turned into pages on this computer (${
+          error instanceof Error ? error.message : "render failed"
+        }). Held back — it has not been read yet.`,
+      );
+    }
+    return pages.map((url) => ({ type: "image_url", image_url: { url } }));
   }
+
+  const base64 = bytesToBase64(bytes);
   const mime = job.mimeType && job.mimeType.startsWith("image/") ? job.mimeType : "image/jpeg";
-  return { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } };
+  return [{ type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }];
 }
 
 /** Read one document with the model running on this machine. */
@@ -312,7 +317,7 @@ export async function readWithLocalModel(
   job: LocalJob,
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   const base = trimBase(provider.baseUrl);
-  const mediaBlock = await mediaBlockFor(job, provider.supportsPdf);
+  const mediaBlocks = await mediaBlocksFor(job);
   const userText = userTextFor(job.chatContext);
   const order = provider.models.filter(Boolean);
   if (order.length === 0) throw new Error("No model id is configured for this local endpoint.");
@@ -327,7 +332,7 @@ export async function readWithLocalModel(
       response = await fetchApi(`${base}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
+        body: JSON.stringify(buildChatBody({ model, userText, mediaBlocks })),
       });
     } catch (error) {
       // A local endpoint that does not answer is a setup problem, not a bad file.

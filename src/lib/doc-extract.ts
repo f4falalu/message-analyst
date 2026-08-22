@@ -74,15 +74,18 @@ export function userTextFor(chatContext: string): string {
 export function buildChatBody(params: {
   model: string;
   userText: string;
-  mediaBlock: Record<string, unknown>;
+  /** One media block, or several (e.g. one per rendered PDF page). */
+  mediaBlock?: Record<string, unknown>;
+  mediaBlocks?: Record<string, unknown>[];
 }): Record<string, unknown> {
+  const media = params.mediaBlocks ?? (params.mediaBlock ? [params.mediaBlock] : []);
   return {
     model: params.model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: [{ type: "text", text: params.userText }, params.mediaBlock],
+        content: [{ type: "text", text: params.userText }, ...media],
       },
     ],
     response_format: { type: "json_object" },
