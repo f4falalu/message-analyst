@@ -6,7 +6,8 @@
 // pictures instead.
 
 const MAX_PAGES = 3;
-const TARGET_WIDTH = 1400;
+const TARGET_WIDTH = 1200;
+const JPEG_QUALITY = 0.72;
 
 type PdfModule = typeof import("pdfjs-dist");
 
@@ -45,7 +46,7 @@ export async function pdfToImageDataUrls(bytes: Uint8Array): Promise<string[]> {
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvas, canvasContext: context, viewport }).promise;
-      pages.push(canvas.toDataURL("image/jpeg", 0.82));
+      pages.push(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
       page.cleanup();
     }
   } finally {

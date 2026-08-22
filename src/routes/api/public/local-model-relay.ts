@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const ALLOWED_HOST = /\.ngrok-free\.(app|dev)$/i;
 const ALLOWED_PATH = /^\/(v1\/(models|chat\/completions)|api\/(tags|pull))$/;
+const MAX_RELAY_BODY_BYTES = 32 * 1024 * 1024;
 
 function targetFrom(request: Request): URL | null {
   const raw = new URL(request.url).searchParams.get("target");
@@ -21,6 +22,14 @@ async function relay(request: Request): Promise<Response> {
   const target = targetFrom(request);
   if (!target) return Response.json({ error: "Unsupported local model endpoint." }, { status: 400 });
 
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RELAY_BODY_BYTES) {
+    return Response.json(
+      { error: "The rendered document is too large to relay. Try a smaller file or fewer PDF pages." },
+      { status: 413 },
+    );
+  }
+
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
@@ -32,14 +41,21 @@ async function relay(request: Request): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), 300_000);
 
   try {
-    // Stream the body straight through — buffering multi-megabyte base64 image
-    // payloads in the worker is what makes this relay fall over with a 502.
+    // Do not pipe request.body into another fetch. The edge runtime can terminate
+    // that stream while the upstream fetch still owns it, which surfaces as an
+    // infrastructure 502 before this handler can return an error response.
+    // A bounded byte buffer is deterministic and remains well below memory limits.
+    const body = isBodyless ? null : await request.arrayBuffer();
+    if (body && body.byteLength > MAX_RELAY_BODY_BYTES) {
+      return Response.json(
+        { error: "The rendered document is too large to relay. Try a smaller file or fewer PDF pages." },
+        { status: 413 },
+      );
+    }
     const upstream = await fetch(target, {
       method: request.method,
       headers,
-      body: isBodyless ? null : request.body,
-      // @ts-expect-error duplex is required for streaming request bodies
-      duplex: "half",
+      body,
       redirect: "manual",
       signal: controller.signal,
     });
