@@ -12,6 +12,7 @@ import {
   userTextFor,
   type ExtractedDoc,
 } from "./doc-extract";
+import { pdfToImageDataUrls } from "./pdf-raster";
 import type { LocalJob, LocalProviderInfo } from "./local-read.functions";
 
 /** The endpoint could not be reached at all — the file stays "waiting". */
@@ -316,7 +317,7 @@ export async function readWithLocalModel(
   job: LocalJob,
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   const base = trimBase(provider.baseUrl);
-  const mediaBlock = await mediaBlockFor(job, provider.supportsPdf);
+  const mediaBlocks = await mediaBlocksFor(job);
   const userText = userTextFor(job.chatContext);
   const order = provider.models.filter(Boolean);
   if (order.length === 0) throw new Error("No model id is configured for this local endpoint.");
@@ -331,7 +332,7 @@ export async function readWithLocalModel(
       response = await fetchApi(`${base}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
+        body: JSON.stringify(buildChatBody({ model, userText, mediaBlocks })),
       });
     } catch (error) {
       // A local endpoint that does not answer is a setup problem, not a bad file.
