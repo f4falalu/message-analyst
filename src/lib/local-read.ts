@@ -36,6 +36,7 @@ export class LocalDeferError extends Error {
 }
 
 const MAX_LOCAL_BYTES = 20 * 1024 * 1024;
+const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 3_300_000;
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -306,9 +307,47 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
     return pages.map((url) => ({ type: "image_url", image_url: { url } }));
   }
 
-  const base64 = bytesToBase64(bytes);
   const mime = job.mimeType && job.mimeType.startsWith("image/") ? job.mimeType : "image/jpeg";
-  return [{ type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }];
+  const blob = new Blob([bytes], { type: mime });
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    const rawUrl = `data:${mime};base64,${bytesToBase64(bytes)}`;
+    if (rawUrl.length > MAX_LOCAL_IMAGE_DATA_URL_CHARS) {
+      throw new LocalDeferError(
+        "The image could not be compressed safely for the local connection. It will be retried in the cloud lane.",
+      );
+    }
+    return [{ type: "image_url", image_url: { url: rawUrl } }];
+  }
+
+  try {
+    const longest = Math.max(bitmap.width, bitmap.height);
+    let scale = Math.min(1, 1400 / longest);
+    let quality = 0.68;
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("This browser could not prepare the image.");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const url = canvas.toDataURL("image/jpeg", quality);
+      if (url.length <= MAX_LOCAL_IMAGE_DATA_URL_CHARS || attempt === 5) {
+        return [{ type: "image_url", image_url: { url } }];
+      }
+      scale *= 0.78;
+      quality = Math.max(0.4, quality - 0.07);
+    }
+  } finally {
+    bitmap.close();
+  }
+
+  throw new LocalDeferError("The image could not be prepared for the local model.");
 }
 
 /** Read one document with the model running on this machine. */

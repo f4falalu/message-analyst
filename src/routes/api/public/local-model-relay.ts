@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const ALLOWED_HOST = /\.ngrok-free\.(app|dev)$/i;
 const ALLOWED_PATH = /^\/(v1\/(models|chat\/completions)|api\/(tags|pull))$/;
-const MAX_RELAY_BODY_BYTES = 32 * 1024 * 1024;
+// Keep this below the ingress proxy's practical request ceiling. Browser-side
+// rasterisation targets a substantially smaller payload before calling us.
+const MAX_RELAY_BODY_BYTES = 8 * 1024 * 1024;
 
 function targetFrom(request: Request): URL | null {
   const raw = new URL(request.url).searchParams.get("target");

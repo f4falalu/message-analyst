@@ -6,8 +6,9 @@
 // pictures instead.
 
 const MAX_PAGES = 3;
-const TARGET_WIDTH = 1200;
-const JPEG_QUALITY = 0.72;
+const TARGET_WIDTH = 900;
+const JPEG_QUALITY = 0.58;
+const MAX_PAGE_DATA_URL_CHARS = 1_100_000;
 
 type PdfModule = typeof import("pdfjs-dist");
 
@@ -23,6 +24,29 @@ async function loadPdfjs(): Promise<PdfModule> {
     })();
   }
   return pdfjsPromise;
+}
+
+function boundedJpegDataUrl(canvas: HTMLCanvasElement): string {
+  let source = canvas;
+  let quality = JPEG_QUALITY;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const url = source.toDataURL("image/jpeg", quality);
+    if (url.length <= MAX_PAGE_DATA_URL_CHARS) return url;
+
+    quality = Math.max(0.38, quality - 0.08);
+    const resized = document.createElement("canvas");
+    resized.width = Math.max(480, Math.floor(source.width * 0.82));
+    resized.height = Math.max(480, Math.floor(source.height * 0.82));
+    const context = resized.getContext("2d");
+    if (!context) throw new Error("This browser could not resize the PDF page.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, resized.width, resized.height);
+    context.drawImage(source, 0, 0, resized.width, resized.height);
+    source = resized;
+  }
+
+  return source.toDataURL("image/jpeg", 0.35);
 }
 
 /** Render the first pages of a PDF as JPEG data URLs. */
@@ -46,7 +70,7 @@ export async function pdfToImageDataUrls(bytes: Uint8Array): Promise<string[]> {
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvas, canvasContext: context, viewport }).promise;
-      pages.push(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
+      pages.push(boundedJpegDataUrl(canvas));
       page.cleanup();
     }
   } finally {
