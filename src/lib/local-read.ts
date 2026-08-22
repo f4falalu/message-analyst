@@ -455,8 +455,10 @@ export async function readWithLocalModel(
         pageResults.push(result.extracted);
         usedModel = result.model;
       }
+      const firstPage = pageResults[0];
+      if (!firstPage) throw new Error("The document had no readable image pages.");
       return {
-        extracted: pageResults.length === 1 ? pageResults[0] : mergePageExtractions(pageResults),
+        extracted: pageResults.length === 1 ? firstPage : mergePageExtractions(pageResults),
         model: usedModel,
       };
     } catch (error) {
