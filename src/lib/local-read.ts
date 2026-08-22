@@ -216,9 +216,9 @@ export async function pullOllamaModel(
 
   let res: Response;
   try {
-    res = await fetch(`${root}/api/pull`, {
+    res = await fetchApi(`${root}/api/pull`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...tunnelHeaders(root) },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: wanted, stream: true }),
     });
   } catch (error) {
@@ -316,9 +316,9 @@ export async function readWithLocalModel(
     const isLast = index === order.length - 1;
     let response: Response;
     try {
-      response = await fetch(`${base}/chat/completions`, {
+      response = await fetchApi(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...tunnelHeaders(base) },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
       });
     } catch (error) {
