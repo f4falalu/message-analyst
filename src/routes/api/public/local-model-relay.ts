@@ -45,7 +45,7 @@ async function relay(request: Request): Promise<Response> {
     // that stream while the upstream fetch still owns it, which surfaces as an
     // infrastructure 502 before this handler can return an error response.
     // A bounded byte buffer is deterministic and remains well below memory limits.
-    const body = isBodyless ? undefined : await request.arrayBuffer();
+    const body = isBodyless ? null : await request.arrayBuffer();
     if (body && body.byteLength > MAX_RELAY_BODY_BYTES) {
       return Response.json(
         { error: "The rendered document is too large to relay. Try a smaller file or fewer PDF pages." },
