@@ -92,7 +92,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 
   for (const base of candidateBases(baseUrl)) {
     try {
-      const res = await fetch(`${base}/models`);
+      const res = await fetch(`${base}/models`, { headers: tunnelHeaders(base) });
       if (res.ok) {
         const payload = (await res.json()) as { data?: { id?: string }[] };
         for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
