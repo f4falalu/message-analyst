@@ -438,7 +438,7 @@ function ModelsPage() {
                   that combination, so the test will fail with “Failed to fetch” even while Ollama is running. Expose
                   Ollama over https with a tunnel and paste that https URL (ending in <code>/v1</code>) as the base URL.
                   Recommended — <strong>ngrok</strong> (made for API access):
-                  <code>ngrok http 11434</code>, then paste <code>https://<your-id>.ngrok-free.app/v1</code>.
+                  <code>ngrok http 11434</code>, then paste <code>https://{"<your-id>"}.ngrok-free.app/v1</code>.
                   Free Cloudflare quick tunnels (<code>trycloudflare.com</code>) block API calls and won't work here.
                 </p>
               ) : null}
