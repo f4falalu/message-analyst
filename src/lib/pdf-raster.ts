@@ -35,14 +35,14 @@ function boundedJpegDataUrl(canvas: HTMLCanvasElement): string {
   let source = canvas;
   let quality = JPEG_QUALITY;
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const url = source.toDataURL("image/jpeg", quality);
     if (url.length <= MAX_PAGE_DATA_URL_CHARS) return url;
 
-    quality = Math.max(0.38, quality - 0.08);
+    quality = Math.max(0.45, quality - 0.07);
     const resized = document.createElement("canvas");
-    resized.width = Math.max(480, Math.floor(source.width * 0.82));
-    resized.height = Math.max(480, Math.floor(source.height * 0.82));
+    resized.width = Math.max(700, Math.floor(source.width * 0.85));
+    resized.height = Math.max(700, Math.floor(source.height * 0.85));
     const context = resized.getContext("2d");
     if (!context) throw new Error("This browser could not resize the PDF page.");
     context.fillStyle = "#ffffff";
@@ -51,8 +51,9 @@ function boundedJpegDataUrl(canvas: HTMLCanvasElement): string {
     source = resized;
   }
 
-  return source.toDataURL("image/jpeg", 0.35);
+  return source.toDataURL("image/jpeg", 0.42);
 }
+
 
 /** Render the first pages of a PDF as JPEG data URLs. */
 export async function pdfToImageDataUrls(bytes: Uint8Array): Promise<string[]> {
