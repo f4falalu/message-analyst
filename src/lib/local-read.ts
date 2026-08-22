@@ -431,23 +431,46 @@ async function readMediaBlock(
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   let response: Response;
   try {
+    const body = buildChatBody({ model, userText, mediaBlock });
     response = await fetchApi(`${base}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
+      // Ollama emits incremental chunks as it generates. Streaming lets the
+      // relay return response headers/data before the hosting request deadline
+      // instead of waiting silently for the complete vision result.
+      body: JSON.stringify({ ...body, stream: true }),
     });
   } catch (error) {
     throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
   }
   if (!response.ok) throw await responseError(response);
 
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-    model?: string;
-  };
-  const content = payload.choices?.[0]?.message?.content ?? "";
+  const raw = await response.text();
+  let content = "";
+  let responseModel = model;
+  const chunks = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const chunk of chunks) {
+    const json = chunk.startsWith("data:") ? chunk.slice(5).trim() : chunk;
+    if (!json || json === "[DONE]") continue;
+    try {
+      const payload = JSON.parse(json) as {
+        choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+        message?: { content?: string };
+        model?: string;
+      };
+      responseModel = payload.model || responseModel;
+      content +=
+        payload.choices?.[0]?.delta?.content ??
+        payload.choices?.[0]?.message?.content ??
+        payload.message?.content ??
+        "";
+    } catch {
+      // Ignore transport keepalive lines; malformed model output is handled by
+      // parseJsonLoose after all valid chunks have been assembled.
+    }
+  }
   if (!content) throw new Error(`${model} returned an empty response.`);
-  return { extracted: normalise(parseJsonLoose(content)), model: payload.model || model };
+  return { extracted: normalise(parseJsonLoose(content)), model: responseModel };
 }
 
 /** Read one document with the model running on this machine. */
