@@ -69,20 +69,36 @@ function candidateBases(baseUrl: string): string[] {
 }
 
 /**
- * ngrok's free tier serves an interstitial "warning" page to browser-like
- * requests unless this header is present. It is harmless to every other server
- * (Ollama, LM Studio, cloudflared), so we send it only when the host is ngrok
- * to avoid forcing a CORS preflight on plain localhost endpoints.
+ * ngrok's free tier answers browser requests with an HTML interstitial unless the
+ * `ngrok-skip-browser-warning` header is present. That header is not CORS-safelisted,
+ * so sending it forces a preflight that Ollama rejects (its allow-headers list has no
+ * such entry). Strategy: send nothing first (simple request, always allowed); if the
+ * tunnel hands back the HTML warning page, retry once with the header.
  */
-function tunnelHeaders(baseUrl: string): Record<string, string> {
-  try {
-    if (/ngrok/i.test(new URL(baseUrl).hostname)) {
-      return { "ngrok-skip-browser-warning": "skip" };
-    }
-  } catch {
-    /* not a URL — ignore */
+export class TunnelInterstitialError extends Error {
+  constructor(base: string) {
+    super(
+      `The tunnel at ${base} returned ngrok's browser warning page instead of the model API. ` +
+        `Restart ngrok so it allows the skip header through: ` +
+        `ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"`,
+    );
+    this.name = "TunnelInterstitialError";
   }
-  return {};
+}
+
+function isInterstitial(res: Response): boolean {
+  return (res.headers.get("content-type") ?? "").includes("text/html");
+}
+
+async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, init);
+  if (!isInterstitial(res)) return res;
+  const retry = await fetch(url, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string> | undefined), "ngrok-skip-browser-warning": "true" },
+  });
+  if (isInterstitial(retry)) throw new TunnelInterstitialError(trimBase(url));
+  return retry;
 }
 
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
@@ -92,7 +108,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 
   for (const base of candidateBases(baseUrl)) {
     try {
-      const res = await fetch(`${base}/models`, { headers: tunnelHeaders(base) });
+      const res = await fetchApi(`${base}/models`);
       if (res.ok) {
         const payload = (await res.json()) as { data?: { id?: string }[] };
         for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
@@ -104,7 +120,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
       // Ollama's own listing lives outside the /v1 compatibility path.
       const root = base.replace(/\/v1$/, "");
       try {
-        const res = await fetch(`${root}/api/tags`, { headers: tunnelHeaders(base) });
+        const res = await fetchApi(`${root}/api/tags`);
         if (res.ok) {
           const payload = (await res.json()) as { models?: { name?: string }[] };
           for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
@@ -117,10 +133,13 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
   }
 
   if (ids.length === 0 && lastError) {
+    if (lastError instanceof TunnelInterstitialError) throw lastError;
     throw new LocalUnreachableError(trimBase(baseUrl), explainFailure(baseUrl, lastError));
   }
   return Array.from(new Set(ids));
 }
+
+
 
 
 /**
@@ -197,9 +216,9 @@ export async function pullOllamaModel(
 
   let res: Response;
   try {
-    res = await fetch(`${root}/api/pull`, {
+    res = await fetchApi(`${root}/api/pull`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...tunnelHeaders(root) },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: wanted, stream: true }),
     });
   } catch (error) {
@@ -297,9 +316,9 @@ export async function readWithLocalModel(
     const isLast = index === order.length - 1;
     let response: Response;
     try {
-      response = await fetch(`${base}/chat/completions`, {
+      response = await fetchApi(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...tunnelHeaders(base) },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
       });
     } catch (error) {
