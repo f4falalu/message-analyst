@@ -140,11 +140,6 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 }
 
 
-  if (ids.length === 0 && lastError) {
-    throw new LocalUnreachableError(trimBase(baseUrl), explainFailure(baseUrl, lastError));
-  }
-  return Array.from(new Set(ids));
-}
 
 
 /**
