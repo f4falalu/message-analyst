@@ -199,7 +199,7 @@ export async function pullOllamaModel(
   try {
     res = await fetch(`${root}/api/pull`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...tunnelHeaders(root) },
       body: JSON.stringify({ model: wanted, stream: true }),
     });
   } catch (error) {
