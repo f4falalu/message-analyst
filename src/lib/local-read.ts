@@ -40,36 +40,71 @@ function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
+/** True when this page is served over https but the endpoint is plain http. */
+export function isMixedContent(baseUrl: string): boolean {
+  if (typeof window === "undefined") return false;
+  return window.location.protocol === "https:" && /^http:\/\//i.test(baseUrl.trim());
+}
+
+/**
+ * A browser on an https page refuses plain-http calls to a machine on the local
+ * network (mixed content / private network access), and the failure surfaces as
+ * a bare "Failed to fetch" with no further detail. Say what actually happened.
+ */
+function explainFailure(baseUrl: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : "no response";
+  if (isMixedContent(baseUrl)) {
+    return `${detail} — this page is served over https, and browsers block plain http calls to your computer. Either open this app over http (or a localhost dev URL), or put Ollama behind an https address (e.g. a Cloudflare/ngrok tunnel) and paste that URL here`;
+  }
+  return detail;
+}
+
+/** Same endpoint, alternate loopback spellings — some setups only bind one. */
+function candidateBases(baseUrl: string): string[] {
+  const base = trimBase(baseUrl);
+  const out = [base];
+  if (/\/\/localhost[:/]/i.test(base)) out.push(base.replace("//localhost", "//127.0.0.1"));
+  else if (/\/\/127\.0\.0\.1[:/]/.test(base)) out.push(base.replace("//127.0.0.1", "//localhost"));
+  return out;
+}
+
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
 export async function listLocalModels(baseUrl: string): Promise<string[]> {
-  const base = trimBase(baseUrl);
   const ids: string[] = [];
-  try {
-    const res = await fetch(`${base}/models`);
-    if (res.ok) {
-      const payload = (await res.json()) as { data?: { id?: string }[] };
-      for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
-    }
-  } catch {
-    /* fall through to the Ollama-native listing */
-  }
-  if (ids.length === 0) {
-    // Ollama's own listing lives outside the /v1 compatibility path.
-    const root = base.replace(/\/v1$/, "");
+  let lastError: unknown = null;
+
+  for (const base of candidateBases(baseUrl)) {
     try {
-      const res = await fetch(`${root}/api/tags`);
+      const res = await fetch(`${base}/models`);
       if (res.ok) {
-        const payload = (await res.json()) as { models?: { name?: string }[] };
-        for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
+        const payload = (await res.json()) as { data?: { id?: string }[] };
+        for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
       }
     } catch (error) {
-      if (ids.length === 0) {
-        throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
+      lastError = error;
+    }
+    if (ids.length === 0) {
+      // Ollama's own listing lives outside the /v1 compatibility path.
+      const root = base.replace(/\/v1$/, "");
+      try {
+        const res = await fetch(`${root}/api/tags`);
+        if (res.ok) {
+          const payload = (await res.json()) as { models?: { name?: string }[] };
+          for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
+        }
+      } catch (error) {
+        lastError = error;
       }
     }
+    if (ids.length > 0) break;
+  }
+
+  if (ids.length === 0 && lastError) {
+    throw new LocalUnreachableError(trimBase(baseUrl), explainFailure(baseUrl, lastError));
   }
   return Array.from(new Set(ids));
 }
+
 
 /**
  * Model ids that can actually look at a scan. Text-only models silently return
