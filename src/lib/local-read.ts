@@ -36,7 +36,9 @@ export class LocalDeferError extends Error {
 }
 
 const MAX_LOCAL_BYTES = 60 * 1024 * 1024;
-const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 2_600_000;
+// The hosting ingress sits in front of the relay route and rejects oversized
+// JSON before route code runs. This leaves room for prompt/context JSON too.
+const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 560_000;
 // Pages of one document are read a few at a time: fast without overwhelming a
 // single local runtime, which serialises inference anyway.
 const PAGE_CONCURRENCY = 3;
@@ -327,10 +329,10 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
 
   try {
     const longest = Math.max(bitmap.width, bitmap.height);
-    let scale = Math.min(1, 2000 / longest);
+    let scale = Math.min(1, 1600 / longest);
     let quality = 0.78;
 
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
       canvas.height = Math.max(1, Math.round(bitmap.height * scale));
@@ -344,7 +346,7 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
         return [{ type: "image_url", image_url: { url } }];
       }
       scale *= 0.82;
-      quality = Math.max(0.45, quality - 0.06);
+      quality = Math.max(0.38, quality - 0.06);
     }
   } finally {
     bitmap.close();
