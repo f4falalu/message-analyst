@@ -39,9 +39,10 @@ const MAX_LOCAL_BYTES = 60 * 1024 * 1024;
 // The hosting ingress sits in front of the relay route and rejects oversized
 // JSON before route code runs. This leaves room for prompt/context JSON too.
 const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 560_000;
-// Pages of one document are read a few at a time: fast without overwhelming a
-// single local runtime, which serialises inference anyway.
-const PAGE_CONCURRENCY = 3;
+// Ollama normally serialises inference. Multiple simultaneous vision requests
+// increase memory pressure and can make the tunnel look unresponsive, so keep
+// one document page in flight while still processing the whole document.
+const PAGE_CONCURRENCY = 1;
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -93,6 +94,23 @@ function isInterstitial(res: Response): boolean {
 async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
   const parsed = new URL(url);
   if (/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)) {
+    // Prefer the browser-to-ngrok path. Vision inference can take longer than
+    // the hosted relay request lifetime, which otherwise produces an HTML 502
+    // even though Ollama is still working. A correctly configured Ollama/ngrok
+    // endpoint permits this request through CORS.
+    try {
+      const direct = await fetch(url, {
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string> | undefined),
+          "ngrok-skip-browser-warning": "true",
+        },
+      });
+      if (!isInterstitial(direct)) return direct;
+    } catch {
+      // Older Ollama setups may still reject the browser preflight. Preserve
+      // the bounded server relay as a compatibility fallback for those users.
+    }
     return fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
   }
   const res = await fetch(url, init);
