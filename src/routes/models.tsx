@@ -294,9 +294,10 @@ function ModelsPage() {
         <div className="mt-8 rounded-lg border border-border/60 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium text-foreground">
+              <div className="text-sm font-medium text-foreground">
                 Built-in Lovable AI {usingLovable ? <Badge className="ml-2">In use</Badge> : null}
-              </p>
+              </div>
+
               <p className="mt-1 text-xs text-muted-foreground">
                 {lovableAvailable
                   ? "Gemini via workspace credits — no key needed, but it draws down credits on every page read."
