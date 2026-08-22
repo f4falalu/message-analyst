@@ -19,7 +19,7 @@ import {
 export type { ExtractedDoc, FieldConfidence };
 
 /** How large an inlined PDF may be. Heavy files are read one at a time. */
-export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+export const MAX_PDF_BYTES = 32 * 1024 * 1024;
 
 /**
  * Thrown when a document cannot be read *yet* (too large for the current
