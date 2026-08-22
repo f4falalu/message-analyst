@@ -69,15 +69,37 @@ function candidateBases(baseUrl: string): string[] {
 }
 
 /**
- * Kept intentionally empty: adding a custom header (e.g. ngrok-skip-browser-warning)
- * turns these into CORS-preflighted requests, and Ollama's allow-headers list does
- * not include it, so the preflight 403s and the whole call fails. Plain requests
- * with no custom headers stay "simple" and go straight through the tunnel.
+ * ngrok's free tier answers browser requests with an HTML interstitial unless the
+ * `ngrok-skip-browser-warning` header is present. That header is not CORS-safelisted,
+ * so sending it forces a preflight that Ollama rejects (its allow-headers list has no
+ * such entry). Strategy: send nothing first (simple request, always allowed); if the
+ * tunnel hands back the HTML warning page, retry once with the header.
  */
-function tunnelHeaders(_baseUrl: string): Record<string, string> {
-  return {};
+export class TunnelInterstitialError extends Error {
+  constructor(base: string) {
+    super(
+      `The tunnel at ${base} returned ngrok's browser warning page instead of the model API. ` +
+        `Restart ngrok so it allows the skip header through: ` +
+        `ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"`,
+    );
+    this.name = "TunnelInterstitialError";
+  }
 }
 
+function isInterstitial(res: Response): boolean {
+  return (res.headers.get("content-type") ?? "").includes("text/html");
+}
+
+async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, init);
+  if (!isInterstitial(res)) return res;
+  const retry = await fetch(url, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string> | undefined), "ngrok-skip-browser-warning": "true" },
+  });
+  if (isInterstitial(retry)) throw new TunnelInterstitialError(trimBase(url));
+  return retry;
+}
 
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
 export async function listLocalModels(baseUrl: string): Promise<string[]> {
@@ -86,7 +108,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 
   for (const base of candidateBases(baseUrl)) {
     try {
-      const res = await fetch(`${base}/models`, { headers: tunnelHeaders(base) });
+      const res = await fetchApi(`${base}/models`);
       if (res.ok) {
         const payload = (await res.json()) as { data?: { id?: string }[] };
         for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
@@ -98,7 +120,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
       // Ollama's own listing lives outside the /v1 compatibility path.
       const root = base.replace(/\/v1$/, "");
       try {
-        const res = await fetch(`${root}/api/tags`, { headers: tunnelHeaders(base) });
+        const res = await fetchApi(`${root}/api/tags`);
         if (res.ok) {
           const payload = (await res.json()) as { models?: { name?: string }[] };
           for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
@@ -109,6 +131,14 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
     }
     if (ids.length > 0) break;
   }
+
+  if (ids.length === 0 && lastError) {
+    if (lastError instanceof TunnelInterstitialError) throw lastError;
+    throw new LocalUnreachableError(trimBase(baseUrl), explainFailure(baseUrl, lastError));
+  }
+  return Array.from(new Set(ids));
+}
+
 
   if (ids.length === 0 && lastError) {
     throw new LocalUnreachableError(trimBase(baseUrl), explainFailure(baseUrl, lastError));
