@@ -342,7 +342,7 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       const url = canvas.toDataURL("image/jpeg", quality);
-      if (url.length <= MAX_LOCAL_IMAGE_DATA_URL_CHARS || attempt === 5) {
+      if (url.length <= MAX_LOCAL_IMAGE_DATA_URL_CHARS) {
         return [{ type: "image_url", image_url: { url } }];
       }
       scale *= 0.82;
