@@ -453,7 +453,7 @@ function ModelsPage() {
                       <code>ngrok config add-authtoken {"<YOUR_TOKEN>"}</code>
                     </li>
                     <li>
-                      Start it: <code>ngrok http 11434 --host-header=localhost:11434</code>
+                      Start it: <code>ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"</code>
                     </li>
                     <li>
                       Paste the printed URL here as <code>https://{"<your-id>"}.ngrok-free.app/v1</code>
@@ -479,7 +479,7 @@ function ModelsPage() {
                     </li>
                     <li>
                       Stop ngrok (<code>Ctrl+C</code>) and restart it with host rewriting:{" "}
-                      <code>ngrok http 11434 --host-header=localhost:11434</code>
+                      <code>ngrok http 11434 --host-header=localhost:11434 --response-header-add "Access-Control-Allow-Headers:*"</code>
                     </li>
                     <li>Paste the printed https URL here with <code>/v1</code> on the end and test again.</li>
                   </ol>
