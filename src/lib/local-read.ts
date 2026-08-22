@@ -69,21 +69,15 @@ function candidateBases(baseUrl: string): string[] {
 }
 
 /**
- * ngrok's free tier serves an interstitial "warning" page to browser-like
- * requests unless this header is present. It is harmless to every other server
- * (Ollama, LM Studio, cloudflared), so we send it only when the host is ngrok
- * to avoid forcing a CORS preflight on plain localhost endpoints.
+ * Kept intentionally empty: adding a custom header (e.g. ngrok-skip-browser-warning)
+ * turns these into CORS-preflighted requests, and Ollama's allow-headers list does
+ * not include it, so the preflight 403s and the whole call fails. Plain requests
+ * with no custom headers stay "simple" and go straight through the tunnel.
  */
-function tunnelHeaders(baseUrl: string): Record<string, string> {
-  try {
-    if (/ngrok/i.test(new URL(baseUrl).hostname)) {
-      return { "ngrok-skip-browser-warning": "skip" };
-    }
-  } catch {
-    /* not a URL — ignore */
-  }
+function tunnelHeaders(_baseUrl: string): Record<string, string> {
   return {};
 }
+
 
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
 export async function listLocalModels(baseUrl: string): Promise<string[]> {
