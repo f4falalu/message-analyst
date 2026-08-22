@@ -33,7 +33,7 @@ async function relay(request: Request): Promise<Response> {
       method: request.method,
       headers,
       body,
-      redirect: "error",
+      redirect: "manual",
     });
     const contentType = upstream.headers.get("content-type") ?? "";
     if (contentType.includes("text/html")) {
