@@ -4,7 +4,10 @@ const ALLOWED_HOST = /\.ngrok-free\.(app|dev)$/i;
 const ALLOWED_PATH = /^\/(v1\/(models|chat\/completions)|api\/(tags|pull))$/;
 // Keep this below the ingress proxy's practical request ceiling. Browser-side
 // rasterisation targets a substantially smaller payload before calling us.
-const MAX_RELAY_BODY_BYTES = 8 * 1024 * 1024;
+// Requests larger than the public ingress allowance never reach this route and
+// surface as an HTML 502. Keep our explicit guard below that hard boundary so
+// callers receive a useful JSON 413 if compression ever regresses.
+const MAX_RELAY_BODY_BYTES = 700 * 1024;
 
 function targetFrom(request: Request): URL | null {
   const raw = new URL(request.url).searchParams.get("target");
