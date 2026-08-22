@@ -340,8 +340,8 @@ export async function readWithLocalModel(
     }
 
     if (!response.ok) {
-      const text = await response.text();
-      lastError = new Error(`Local model failed [${response.status}] on ${model}: ${text.slice(0, 400)}`);
+      const failure = await responseError(response);
+      lastError = new Error(`Local model failed [${response.status}] on ${model}: ${failure.message}`);
       if (!isLast) continue;
       throw lastError;
     }
