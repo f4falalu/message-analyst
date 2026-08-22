@@ -433,14 +433,37 @@ function ModelsPage() {
                 </p>
               ) : null}
               {form.runLocation === "browser" && isMixedContent(form.baseUrl) ? (
-                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-                  This page is on <strong>https</strong> and your model is on plain <strong>http</strong>. Browsers block
-                  that combination, so the test will fail with “Failed to fetch” even while Ollama is running. Expose
-                  Ollama over https with a tunnel and paste that https URL (ending in <code>/v1</code>) as the base URL.
-                  Recommended — <strong>ngrok</strong> (made for API access):
-                  <code>ngrok http 11434</code>, then paste <code>https://{"<your-id>"}.ngrok-free.app/v1</code>.
-                  Free Cloudflare quick tunnels (<code>trycloudflare.com</code>) block API calls and won't work here.
-                </p>
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  <p>
+                    This page is on <strong>https</strong> and your model is on plain <strong>http</strong>. Browsers block
+                    that combination, so the test will fail with “Failed to fetch” even while Ollama is running. Expose
+                    Ollama over https with a tunnel and paste that https URL (ending in <code>/v1</code>) as the base URL.
+                  </p>
+                  <p className="mt-2 font-semibold">Recommended — ngrok (one-time setup, free):</p>
+                  <ol className="mt-1 list-decimal space-y-1 pl-5">
+                    <li>
+                      Sign up (free): <code>dashboard.ngrok.com/signup</code>
+                    </li>
+                    <li>
+                      Copy your authtoken: <code>dashboard.ngrok.com/get-started/your-authtoken</code>
+                    </li>
+                    <li>
+                      In a terminal (one-time):{" "}
+                      <code>ngrok config add-authtoken {"<YOUR_TOKEN>"}</code>
+                    </li>
+                    <li>
+                      Start it: <code>ngrok http 11434</code>
+                    </li>
+                    <li>
+                      Paste the printed URL here as <code>https://{"<your-id>"}.ngrok-free.app/v1</code>
+                    </li>
+                  </ol>
+                  <p className="mt-2">
+                    ngrok needs an authtoken even on the free plan — without it you get{" "}
+                    <code>ERR_NGROK_4018</code>. Free Cloudflare quick tunnels (<code>trycloudflare.com</code>) block
+                    API calls and won't work here.
+                  </p>
+                </div>
               ) : null}
 
               {discovered.length > 0 ? (
