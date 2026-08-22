@@ -49,7 +49,7 @@ export async function pdfToImageDataUrls(bytes: Uint8Array): Promise<string[]> {
       page.cleanup();
     }
   } finally {
-    await doc.destroy();
+    await doc.cleanup();
   }
 
   if (pages.length === 0) throw new Error("The PDF had no readable pages.");
