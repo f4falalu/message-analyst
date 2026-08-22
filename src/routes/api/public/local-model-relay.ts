@@ -28,10 +28,11 @@ async function relay(request: Request): Promise<Response> {
   headers.set("ngrok-skip-browser-warning", "true");
 
   try {
+    const body = request.method === "GET" || request.method === "HEAD" ? null : await request.arrayBuffer();
     const upstream = await fetch(target, {
       method: request.method,
       headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+      body,
       redirect: "error",
     });
     const responseHeaders = new Headers();
