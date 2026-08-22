@@ -452,7 +452,7 @@ function ModelsPage() {
                       <code>ngrok config add-authtoken {"<YOUR_TOKEN>"}</code>
                     </li>
                     <li>
-                      Start it: <code>ngrok http 11434</code>
+                      Start it: <code>ngrok http 11434 --host-header=localhost:11434</code>
                     </li>
                     <li>
                       Paste the printed URL here as <code>https://{"<your-id>"}.ngrok-free.app/v1</code>
@@ -463,6 +463,13 @@ function ModelsPage() {
                     <code>ERR_NGROK_4018</code>. Free Cloudflare quick tunnels (<code>trycloudflare.com</code>) block
                     API calls and won't work here.
                   </p>
+                </div>
+              ) : null}
+              {form.runLocation === "browser" && /ngrok-free\.(app|dev)/i.test(form.baseUrl) ? (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  If ngrok shows <code>OPTIONS /models 403</code>, restart it with host rewriting enabled: stop the current
+                  tunnel with <code>Ctrl+C</code>, then run <code>ngrok http 11434 --host-header=localhost:11434</code>.
+                  Keep this Base URL and test again after ngrok prints its new forwarding address.
                 </div>
               ) : null}
 
