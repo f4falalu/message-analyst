@@ -35,6 +35,12 @@ async function relay(request: Request): Promise<Response> {
       body,
       redirect: "manual",
     });
+    if (upstream.status >= 300 && upstream.status < 400) {
+      return Response.json(
+        { error: "The tunnel redirected the request instead of answering. Point it straight at Ollama (port 11434)." },
+        { status: 502 },
+      );
+    }
     const contentType = upstream.headers.get("content-type") ?? "";
     if (contentType.includes("text/html")) {
       const code = upstream.headers.get("ngrok-error-code");
