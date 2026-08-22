@@ -27,13 +27,21 @@ async function relay(request: Request): Promise<Response> {
   headers.set("accept", request.headers.get("accept") ?? "application/json");
   headers.set("ngrok-skip-browser-warning", "true");
 
+  const isBodyless = request.method === "GET" || request.method === "HEAD";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 300_000);
+
   try {
-    const body = request.method === "GET" || request.method === "HEAD" ? null : await request.arrayBuffer();
+    // Stream the body straight through — buffering multi-megabyte base64 image
+    // payloads in the worker is what makes this relay fall over with a 502.
     const upstream = await fetch(target, {
       method: request.method,
       headers,
-      body,
+      body: isBodyless ? null : request.body,
+      // @ts-expect-error duplex is required for streaming request bodies
+      duplex: "half",
       redirect: "manual",
+      signal: controller.signal,
     });
     if (upstream.status >= 300 && upstream.status < 400) {
       return Response.json(
@@ -53,11 +61,16 @@ async function relay(request: Request): Promise<Response> {
     responseHeaders.set("content-type", contentType || "application/json");
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   } catch (error) {
-    return Response.json(
-      { error: error instanceof Error ? error.message : "The tunnel did not respond." },
-      { status: 502 },
-    );
+    const message = controller.signal.aborted
+      ? "This computer took too long to answer (over 5 minutes). Try a smaller model or fewer files at a time."
+      : error instanceof Error
+        ? `Could not reach the tunnel: ${error.message}`
+        : "The tunnel did not respond.";
+    return Response.json({ error: message }, { status: 502 });
+  } finally {
+    clearTimeout(timeout);
   }
+
 }
 
 export const Route = createFileRoute("/api/public/local-model-relay")({
