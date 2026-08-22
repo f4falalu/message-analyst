@@ -289,16 +289,25 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
       `File is larger than the local reading limit (${(bytes.length / 1024 / 1024).toFixed(1)} MB). Held back — it has not been read yet.`,
     );
   }
-  const base64 = bytesToBase64(bytes);
-
   if (isPdf) {
-    return {
-      type: "file",
-      file: { filename: job.filename, file_data: `data:application/pdf;base64,${base64}` },
-    };
+    // Local runtimes reject PDF attachments outright ("invalid message
+    // format"), so the tab renders the pages and sends pictures instead.
+    let pages: string[];
+    try {
+      pages = await pdfToImageDataUrls(bytes);
+    } catch (error) {
+      throw new LocalDeferError(
+        `The PDF could not be turned into pages on this computer (${
+          error instanceof Error ? error.message : "render failed"
+        }). Held back — it has not been read yet.`,
+      );
+    }
+    return pages.map((url) => ({ type: "image_url", image_url: { url } }));
   }
+
+  const base64 = bytesToBase64(bytes);
   const mime = job.mimeType && job.mimeType.startsWith("image/") ? job.mimeType : "image/jpeg";
-  return { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } };
+  return [{ type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }];
 }
 
 /** Read one document with the model running on this machine. */
