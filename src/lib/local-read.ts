@@ -35,8 +35,11 @@ export class LocalDeferError extends Error {
   }
 }
 
-const MAX_LOCAL_BYTES = 20 * 1024 * 1024;
-const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 700_000;
+const MAX_LOCAL_BYTES = 60 * 1024 * 1024;
+const MAX_LOCAL_IMAGE_DATA_URL_CHARS = 2_600_000;
+// Pages of one document are read a few at a time: fast without overwhelming a
+// single local runtime, which serialises inference anyway.
+const PAGE_CONCURRENCY = 3;
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -324,8 +327,8 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
 
   try {
     const longest = Math.max(bitmap.width, bitmap.height);
-    let scale = Math.min(1, 1400 / longest);
-    let quality = 0.68;
+    let scale = Math.min(1, 2000 / longest);
+    let quality = 0.78;
 
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const canvas = document.createElement("canvas");
@@ -340,8 +343,8 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
       if (url.length <= MAX_LOCAL_IMAGE_DATA_URL_CHARS || attempt === 5) {
         return [{ type: "image_url", image_url: { url } }];
       }
-      scale *= 0.78;
-      quality = Math.max(0.4, quality - 0.07);
+      scale *= 0.82;
+      quality = Math.max(0.45, quality - 0.06);
     }
   } finally {
     bitmap.close();
@@ -448,13 +451,23 @@ export async function readWithLocalModel(
       // Sending all rendered PDF pages as base64 in one POST exceeds the
       // hosted preview's request ceiling. Read pages sequentially, then merge
       // their structured output into one attachment result.
-      const pageResults: ExtractedDoc[] = [];
+      const pageResults: ExtractedDoc[] = new Array(mediaBlocks.length);
       let usedModel = model;
-      for (const mediaBlock of mediaBlocks) {
-        const result = await readMediaBlock(base, model, userText, mediaBlock);
-        pageResults.push(result.extracted);
-        usedModel = result.model;
-      }
+      let next = 0;
+      const worker = async () => {
+        while (true) {
+          const current = next;
+          next += 1;
+          const mediaBlock = mediaBlocks[current];
+          if (!mediaBlock) return;
+          const result = await readMediaBlock(base, model, userText, mediaBlock);
+          pageResults[current] = result.extracted;
+          usedModel = result.model;
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(PAGE_CONCURRENCY, mediaBlocks.length) }, () => worker()),
+      );
       const firstPage = pageResults[0];
       if (!firstPage) throw new Error("The document had no readable image pages.");
       return {

@@ -5,12 +5,15 @@
 // "invalid message format". So the tab renders the pages itself and sends
 // pictures instead.
 
-const MAX_PAGES = 3;
-const TARGET_WIDTH = 820;
-const JPEG_QUALITY = 0.52;
-// Each PDF page is sent in its own request. Keep enough headroom for the
-// extraction prompt and chat context so the preview ingress accepts the POST.
-const MAX_PAGE_DATA_URL_CHARS = 700_000;
+const MAX_PAGES = 20;
+const TARGET_WIDTH = 1240;
+const JPEG_QUALITY = 0.72;
+// Each PDF page is sent in its own request, so the budget per page is the
+// relay ceiling (8 MB) minus prompt/context headroom. Base64 inflates bytes by
+// ~4/3, so ~2.6M characters stays comfortably inside it while keeping enough
+// resolution for hand-written scans to stay legible.
+const MAX_PAGE_DATA_URL_CHARS = 2_600_000;
+
 
 type PdfModule = typeof import("pdfjs-dist");
 
@@ -32,14 +35,14 @@ function boundedJpegDataUrl(canvas: HTMLCanvasElement): string {
   let source = canvas;
   let quality = JPEG_QUALITY;
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const url = source.toDataURL("image/jpeg", quality);
     if (url.length <= MAX_PAGE_DATA_URL_CHARS) return url;
 
-    quality = Math.max(0.38, quality - 0.08);
+    quality = Math.max(0.45, quality - 0.07);
     const resized = document.createElement("canvas");
-    resized.width = Math.max(480, Math.floor(source.width * 0.82));
-    resized.height = Math.max(480, Math.floor(source.height * 0.82));
+    resized.width = Math.max(700, Math.floor(source.width * 0.85));
+    resized.height = Math.max(700, Math.floor(source.height * 0.85));
     const context = resized.getContext("2d");
     if (!context) throw new Error("This browser could not resize the PDF page.");
     context.fillStyle = "#ffffff";
@@ -48,8 +51,9 @@ function boundedJpegDataUrl(canvas: HTMLCanvasElement): string {
     source = resized;
   }
 
-  return source.toDataURL("image/jpeg", 0.35);
+  return source.toDataURL("image/jpeg", 0.42);
 }
+
 
 /** Render the first pages of a PDF as JPEG data URLs. */
 export async function pdfToImageDataUrls(bytes: Uint8Array): Promise<string[]> {
