@@ -435,10 +435,11 @@ function ModelsPage() {
               {form.runLocation === "browser" && isMixedContent(form.baseUrl) ? (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
                   This page is on <strong>https</strong> and your model is on plain <strong>http</strong>. Browsers block
-                  that combination, so the test will fail with “Failed to fetch” even while Ollama is running. Two ways
-                  round it: open this app from an http address (a local dev URL), or expose Ollama over https with a
-                  tunnel (e.g. <code>cloudflared tunnel --url http://localhost:11434</code>) and paste that https URL as
-                  the base URL, adding <code>/v1</code> at the end.
+                  that combination, so the test will fail with “Failed to fetch” even while Ollama is running. Expose
+                  Ollama over https with a tunnel and paste that https URL (ending in <code>/v1</code>) as the base URL.
+                  Recommended — <strong>ngrok</strong> (made for API access):
+                  <code>ngrok http 11434</code>, then paste <code>https://{"<your-id>"}.ngrok-free.app/v1</code>.
+                  Free Cloudflare quick tunnels (<code>trycloudflare.com</code>) block API calls and won't work here.
                 </p>
               ) : null}
 

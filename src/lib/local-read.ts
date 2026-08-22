@@ -68,6 +68,23 @@ function candidateBases(baseUrl: string): string[] {
   return out;
 }
 
+/**
+ * ngrok's free tier serves an interstitial "warning" page to browser-like
+ * requests unless this header is present. It is harmless to every other server
+ * (Ollama, LM Studio, cloudflared), so we send it only when the host is ngrok
+ * to avoid forcing a CORS preflight on plain localhost endpoints.
+ */
+function tunnelHeaders(baseUrl: string): Record<string, string> {
+  try {
+    if (/ngrok/i.test(new URL(baseUrl).hostname)) {
+      return { "ngrok-skip-browser-warning": "skip" };
+    }
+  } catch {
+    /* not a URL — ignore */
+  }
+  return {};
+}
+
 /** Whatever this endpoint says it can serve — OpenAI shape first, Ollama second. */
 export async function listLocalModels(baseUrl: string): Promise<string[]> {
   const ids: string[] = [];
@@ -75,7 +92,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 
   for (const base of candidateBases(baseUrl)) {
     try {
-      const res = await fetch(`${base}/models`);
+      const res = await fetch(`${base}/models`, { headers: tunnelHeaders(base) });
       if (res.ok) {
         const payload = (await res.json()) as { data?: { id?: string }[] };
         for (const entry of payload.data ?? []) if (entry.id) ids.push(entry.id);
@@ -87,7 +104,7 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
       // Ollama's own listing lives outside the /v1 compatibility path.
       const root = base.replace(/\/v1$/, "");
       try {
-        const res = await fetch(`${root}/api/tags`);
+        const res = await fetch(`${root}/api/tags`, { headers: tunnelHeaders(base) });
         if (res.ok) {
           const payload = (await res.json()) as { models?: { name?: string }[] };
           for (const entry of payload.models ?? []) if (entry.name) ids.push(entry.name);
@@ -182,7 +199,7 @@ export async function pullOllamaModel(
   try {
     res = await fetch(`${root}/api/pull`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...tunnelHeaders(root) },
       body: JSON.stringify({ model: wanted, stream: true }),
     });
   } catch (error) {
@@ -282,7 +299,7 @@ export async function readWithLocalModel(
     try {
       response = await fetch(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...tunnelHeaders(base) },
         body: JSON.stringify(buildChatBody({ model, userText, mediaBlock })),
       });
     } catch (error) {
