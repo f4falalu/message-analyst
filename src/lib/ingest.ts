@@ -485,6 +485,12 @@ export async function ingestZip(
       total: 1,
     });
 
+    // Only a complete, uninterrupted upload retires the checkpoint; anything
+    // else stays so the same zip can be resumed later.
+    if (!cancelled && failed.length === 0) clearZipCheckpoint(key);
+
+
+
     return {
       importId,
       messages: parsed.messages.length,
