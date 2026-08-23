@@ -630,7 +630,7 @@ function mergePageExtractions(pages: ExtractedDoc[]): ExtractedDoc {
 }
 
 /** One page must come back within this window or the lane is freed. */
-const PAGE_DEADLINE_MS = 180_000;
+const PAGE_DEADLINE_MS = 420_000;
 
 async function readMediaBlock(
   base: string,
