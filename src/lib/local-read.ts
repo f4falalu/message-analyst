@@ -506,7 +506,14 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
     // format"), so the tab renders the pages and sends pictures instead.
     let pages: string[];
     try {
-      pages = await pdfToImageDataUrls(bytes);
+      // A malformed PDF can keep pdf.js busy indefinitely and stall the lane.
+      pages = await Promise.race([
+        pdfToImageDataUrls(bytes),
+        new Promise<string[]>((_, reject) =>
+          setTimeout(() => reject(new Error("rendering took longer than 90s")), 90_000),
+        ),
+      ]);
+
     } catch (error) {
       throw new LocalDeferError(
         `The PDF could not be turned into pages on this computer (${
@@ -614,6 +621,9 @@ function mergePageExtractions(pages: ExtractedDoc[]): ExtractedDoc {
   };
 }
 
+/** One page must come back within this window or the lane is freed. */
+const PAGE_DEADLINE_MS = 180_000;
+
 async function readMediaBlock(
   base: string,
   model: string,
@@ -621,6 +631,8 @@ async function readMediaBlock(
   mediaBlock: Record<string, unknown>,
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   let response: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGE_DEADLINE_MS);
   try {
     const body = buildChatBody({
       model,
@@ -632,16 +644,25 @@ async function readMediaBlock(
     response = await fetchApi(`${base}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       // Ollama emits incremental chunks as it generates. Streaming lets the
       // relay return response headers/data before the hosting request deadline
       // instead of waiting silently for the complete vision result.
       body: JSON.stringify({ ...body, stream: true }),
     });
   } catch (error) {
+    clearTimeout(timer);
     if (error instanceof LocalUnreachableError) throw error;
+    if (controller.signal.aborted) {
+      throw new LocalDeferError(
+        `This computer did not finish the page within ${Math.round(PAGE_DEADLINE_MS / 1000)}s. Held back — it has not been read yet.`,
+      );
+    }
     throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
   }
+  clearTimeout(timer);
   if (!response.ok) throw await responseError(response);
+
 
   const raw = await response.text();
   let content = "";
