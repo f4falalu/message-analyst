@@ -94,6 +94,7 @@ function isInterstitial(res: Response): boolean {
 async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
   const parsed = new URL(url);
   if (/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)) {
+    const isGenerationRequest = /\/chat\/completions\/?$/i.test(parsed.pathname);
     // Prefer the browser-to-ngrok path. Vision inference can take longer than
     // the hosted relay request lifetime, which otherwise produces an HTML 502
     // even though Ollama is still working. A correctly configured Ollama/ngrok
@@ -107,9 +108,26 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
         },
       });
       if (!isInterstitial(direct)) return direct;
-    } catch {
-      // Older Ollama setups may still reject the browser preflight. Preserve
-      // the bounded server relay as a compatibility fallback for those users.
+      if (isGenerationRequest) {
+        throw new LocalUnreachableError(
+          parsed.origin,
+          "the tunnel returned an HTML warning page. Configure the tunnel to pass requests directly to Ollama",
+        );
+      }
+    } catch (error) {
+      if (error instanceof LocalUnreachableError) throw error;
+      if (isGenerationRequest) {
+        // Never send slow vision inference through the hosted relay. The relay
+        // has a shorter request lifetime than local models and turns an
+        // otherwise healthy Ollama run into a platform 502. Listing/pulling
+        // models remains safe to relay because those calls answer promptly.
+        throw new LocalUnreachableError(
+          parsed.origin,
+          "the browser could not connect directly through the tunnel. Allow this app's origin in Ollama CORS (for example OLLAMA_ORIGINS=*) and restart Ollama; long document reads cannot use the hosted relay",
+        );
+      }
+      // Older Ollama setups may reject the browser preflight for short control
+      // requests. Preserve the bounded relay only for those quick operations.
     }
     return fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
   }
