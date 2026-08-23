@@ -11,6 +11,13 @@ export type ProviderPreset = {
   models: { id: string; label: string; note?: string }[];
 };
 
+/**
+ * The first model to try on a machine with no GPU. Token generation is bound by
+ * memory bandwidth, so size on disk predicts speed better than anything else:
+ * this is the smallest reader that still handles real paperwork.
+ */
+export const SUGGESTED_LOCAL_MODEL = "qwen3-vl:2b";
+
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: "openrouter",
@@ -116,9 +123,35 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     authStyle: "none",
     keyHint: "no key needed",
     supportsPdf: false,
+    // Ordered smallest-first on purpose. Without a GPU, generation speed is
+    // roughly memory-bandwidth / model-size, so the download size in each note
+    // is the most honest performance number we can give up front.
     models: [
-      { id: "qwen2.5vl:7b", label: "Qwen2.5-VL 7B (local)" },
-      { id: "llama3.2-vision:11b", label: "Llama 3.2 Vision 11B (local)" },
+      {
+        id: "qwen3-vl:2b",
+        label: "Qwen3-VL 2B (local)",
+        note: "1.9 GB. Best starting point on a CPU-only machine",
+      },
+      {
+        id: "qwen3-vl:4b",
+        label: "Qwen3-VL 4B (local)",
+        note: "3.3 GB. More accurate, roughly half the speed of 2B",
+      },
+      {
+        id: "minicpm-v4.6:1b",
+        label: "MiniCPM-V 4.6 1B (local)",
+        note: "1.6 GB. Smallest general-purpose reader",
+      },
+      {
+        id: "glm-ocr",
+        label: "GLM-OCR 0.9B (local)",
+        note: "2.2 GB. Document/table OCR specialist. Transcribes a page; it does not reliably fill this app's JSON schema on its own",
+      },
+      {
+        id: "qwen3-vl:8b",
+        label: "Qwen3-VL 8B (local)",
+        note: "6.1 GB. Only practical with a GPU",
+      },
     ],
   },
   {

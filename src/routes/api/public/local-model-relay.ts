@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { relayTargetFrom } from "@/lib/relay-target";
 
-const ALLOWED_HOST = /\.ngrok-free\.(app|dev)$/i;
-const ALLOWED_PATH = /^\/(v1\/(models|chat\/completions)|api\/(tags|pull))$/;
 // Keep this below the ingress proxy's practical request ceiling. Browser-side
 // rasterisation targets a substantially smaller payload before calling us.
 // Requests larger than the public ingress allowance never reach this route and
@@ -10,17 +9,7 @@ const ALLOWED_PATH = /^\/(v1\/(models|chat\/completions)|api\/(tags|pull))$/;
 const MAX_RELAY_BODY_BYTES = 700 * 1024;
 
 function targetFrom(request: Request): URL | null {
-  const raw = new URL(request.url).searchParams.get("target");
-  if (!raw) return null;
-  try {
-    const target = new URL(raw);
-    if (target.protocol !== "https:" || !ALLOWED_HOST.test(target.hostname) || !ALLOWED_PATH.test(target.pathname)) {
-      return null;
-    }
-    return target;
-  } catch {
-    return null;
-  }
+  return relayTargetFrom(new URL(request.url).searchParams.get("target"));
 }
 
 async function relay(request: Request): Promise<Response> {
