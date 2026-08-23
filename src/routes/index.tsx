@@ -4,7 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Play, Pause, X, AlertTriangle, RotateCcw, ChevronDown, ListChecks } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { ingestZip, type IngestProgress, type IngestFailure } from "@/lib/ingest";
+import {
+  clearZipCheckpoint,
+  ingestZip,
+  listZipCheckpoints,
+  type IngestProgress,
+  type IngestFailure,
+  type ZipCheckpoint,
+} from "@/lib/ingest";
 import { requeueAttachments } from "@/lib/processing.functions";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
