@@ -25,7 +25,7 @@ import { parseArgs } from "node:util";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { SYSTEM_PROMPT, normalise, parseJsonLoose, userTextFor } from "../src/lib/doc-extract.ts";
+import { buildChatBody, normalise, parseJsonLoose, userTextFor } from "../src/lib/doc-extract.ts";
 
 const run = promisify(execFile);
 
@@ -41,6 +41,14 @@ const { values } = parseArgs({
     // Matching that here is what makes the timings representative.
     resize: { type: "boolean", default: true },
     "no-resize": { type: "boolean", default: false },
+    // The local lane sends the compact schema by default, so the benchmark
+    // does too. --full measures the other one for comparison.
+    full: { type: "boolean", default: false },
+    "max-tokens": { type: "string", default: "700" },
+    // Longest edge in pixels. Ollama's default context is 4096 tokens and a
+    // 1600px page alone can be 2,200 of them, so a smaller image is about
+    // staying inside the context window, not about speed.
+    width: { type: "string", default: "1600" },
     json: { type: "string" },
     help: { type: "boolean", default: false },
   },
@@ -58,7 +66,12 @@ Required
 Optional
   --limit <n>         images to test per model (default 10)
   --total <n>         corpus size for the extrapolation (default 3936)
-  --no-resize         send originals instead of matching the app's 1600px downscale
+  --no-resize         send originals instead of matching the app's downscale
+  --width <px>        longest edge (default 1600). Smaller keeps the prompt
+                      inside Ollama's 4096-token context, it does not add speed
+  --full              use the full schema (adds raw_text + field_confidence).
+                      The local lane sends the compact one, so this is slower
+  --max-tokens <n>    ceiling on generated tokens (default 700)
   --json <file>       also write the raw results
 `);
   process.exit(values.help ? 0 : 2);
@@ -69,6 +82,9 @@ const models = values.model.split(",").map((m) => m.trim()).filter(Boolean);
 const limit = Number(values.limit);
 const total = Number(values.total);
 const shouldResize = values["no-resize"] ? false : values.resize;
+const compact = !values.full;
+const maxTokens = Number(values["max-tokens"]);
+const targetWidth = Number(values.width);
 
 const IMAGE_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".heic"]);
 const MIME = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp" };
@@ -110,7 +126,7 @@ async function prepareImages(files) {
   for (const path of files) {
     const target = join(dir, `${basename(path, extname(path))}.jpg`);
     try {
-      await run("sips", ["-Z", "1600", "-s", "format", "jpeg", path, "--out", target]);
+      await run("sips", ["-Z", String(targetWidth), "-s", "format", "jpeg", path, "--out", target]);
       out.push({ path: target, resized: true, original: path });
     } catch {
       out.push({ path, resized: false });
@@ -124,19 +140,16 @@ async function readOne(model, image) {
   const mime = MIME[extname(image.path).toLowerCase()] ?? "image/jpeg";
   const dataUrl = `data:${mime};base64,${bytes.toString("base64")}`;
 
+  // Built by the app's own buildChatBody so the benchmark cannot drift from
+  // what a real run sends.
   const body = {
-    model,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userTextFor("") },
-          { type: "image_url", image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-    response_format: { type: "json_object" },
+    ...buildChatBody({
+      model,
+      userText: userTextFor(""),
+      mediaBlock: { type: "image_url", image_url: { url: dataUrl } },
+      compact,
+      maxTokens,
+    }),
     // Must stream, for two reasons. Node's fetch aborts after 300s waiting for
     // response headers, and a non-streaming request sends none until generation
     // finishes: on a CPU-only host that reliably trips at exactly 5 minutes and
@@ -295,9 +308,10 @@ if (files.length === 0) {
 
 console.log(`\nBenchmarking ${models.length} model(s) on ${files.length} document(s)`);
 console.log(`Endpoint: ${baseUrl}`);
+console.log(`Schema:   ${compact ? "compact (as the local lane sends)" : "full"}, max ${maxTokens} output tokens`);
 const prepared = await prepareImages(files);
 if (prepared.some((p) => p.resized)) {
-  console.log("Images downscaled to 1600px to match what the app sends.");
+  console.log(`Images downscaled to ${targetWidth}px to match what the app sends.`);
 }
 
 const summaries = [];

@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-DEFAULT_MODEL="qwen3-vl:2b"
+DEFAULT_MODEL="qwen3-vl:2b-instruct"
 OLLAMA_BIND="0.0.0.0:11434"
 API="http://127.0.0.1:11434"
 
@@ -106,10 +106,16 @@ step "Network and origin settings"
 # through launchctl. Verified against Ollama's FAQ ("Setting environment
 # variables on Mac"). They persist for the login session; a reboot clears them,
 # so re-run this script after restarting the machine.
-echo "   OLLAMA_HOST    = $OLLAMA_BIND   (bind beyond loopback so the tunnel can reach it)"
-echo "   OLLAMA_ORIGINS = *              (let the app's browser tab call this machine)"
+echo "   OLLAMA_HOST       = $OLLAMA_BIND   (bind beyond loopback so the tunnel can reach it)"
+echo "   OLLAMA_ORIGINS    = *              (let the app's browser tab call this machine)"
+echo "   OLLAMA_KEEP_ALIVE = -1             (never unload the model between documents)"
 run launchctl setenv OLLAMA_HOST "$OLLAMA_BIND"
 run launchctl setenv OLLAMA_ORIGINS "*"
+# Ollama unloads an idle model after 5 minutes by default. On a CPU-only host a
+# single document can take longer than that, so the model gets evicted and
+# reloaded from disk between documents. On a multi-thousand document run that is
+# pure waste, and it is invisible unless you are watching disk activity.
+run launchctl setenv OLLAMA_KEEP_ALIVE "-1"
 
 if [ -d /Applications/Ollama.app ]; then
   step "Restarting Ollama so it picks the settings up"

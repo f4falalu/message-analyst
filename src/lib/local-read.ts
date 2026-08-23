@@ -34,6 +34,35 @@ export class LocalDeferError extends Error {
   }
 }
 
+/**
+ * The local lane exists for hardware chosen for privacy or cost rather than
+ * speed, where generation is measured at 1.7-3.0 tok/s and dominates the cost
+ * per document. So it asks for the compact schema by default. Set
+ * `wa-archive:full-local-reads` to "true" in localStorage to get the full
+ * schema back, at roughly twice the time per document.
+ *
+ * The cloud lane (doc-reader.server.ts) is untouched: there, output length is
+ * cheap and the extra fields are worth having.
+ */
+const FULL_LOCAL_READS_KEY = "wa-archive:full-local-reads";
+
+/**
+ * A ceiling, not a target. The compact schema needs roughly 250 tokens; this
+ * leaves room for a long itemised document while still stopping a model that
+ * has started rambling. Ollama maps max_tokens to num_predict.
+ */
+const LOCAL_MAX_TOKENS = 700;
+
+export function localReadsAreCompact(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(FULL_LOCAL_READS_KEY) !== "true";
+  } catch {
+    // Private browsing and blocked storage both throw. Default to fast.
+    return true;
+  }
+}
+
 const MAX_LOCAL_BYTES = 60 * 1024 * 1024;
 // The hosting ingress sits in front of the relay route and rejects oversized
 // JSON before route code runs. This leaves room for prompt/context JSON too.
@@ -589,7 +618,13 @@ async function readMediaBlock(
 ): Promise<{ extracted: ExtractedDoc; model: string }> {
   let response: Response;
   try {
-    const body = buildChatBody({ model, userText, mediaBlock });
+    const body = buildChatBody({
+      model,
+      userText,
+      mediaBlock,
+      compact: localReadsAreCompact(),
+      maxTokens: LOCAL_MAX_TOKENS,
+    });
     response = await fetchApi(`${base}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
