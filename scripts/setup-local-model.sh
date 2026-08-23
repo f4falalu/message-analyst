@@ -165,6 +165,7 @@ else
   done
   curl -fsS --max-time 2 "$API/api/tags" >/dev/null 2>&1 \
     || fail "Ollama did not come up on $API. Open the Ollama app manually and re-run."
+  verify_origins
 fi
 
 # ------------------------------------------------------------------ models --
