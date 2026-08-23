@@ -169,6 +169,44 @@ time will not reach seconds on a CPU-only machine.** For 3,936 documents that is
 about 4.8 days of continuous running; filtering the set down to the images that
 are actually paperwork is what turns that into roughly a day.
 
+## Not sending everything to the model
+
+The only lever not capped by hardware is how many documents get read at all.
+`triageImport` sets aside pending attachments that cannot contain a readable
+page. It is a **dry run by default**:
+
+```ts
+// report only, changes nothing
+await triageImport({ data: { importId } });
+
+// then, once the samples look right
+await triageImport({ data: { importId, apply: true } });
+```
+
+It skips audio, video and stickers. On a realistic corpus that is about **32%
+of a year's attachments**, which is a third of the runtime back for no risk:
+none of them contain a page to read. Skipped files keep their row and their
+storage object, and the existing requeue (scope `skipped`) restores all of them.
+
+### A content filter was built here, measured, and removed
+
+The obvious next step is to skip images whose surrounding conversation is purely
+social. It was implemented and tested against realistic message contexts, and it
+**discarded 8 of 11 genuine receipts**. In this group, paperwork routinely
+arrives with nothing but "good morning sir, here", which is textually identical
+to a greeting photo. No amount of regex tuning fixes that, because the
+information that separates the two cases is inside the image.
+
+What survived is `mentionsProcurement()`, the same signal used for **ordering
+rather than exclusion**. Reading likely-paperwork first means an interrupted or
+early-stopped multi-day run has already produced the documents you wanted.
+Everything is still read eventually, so being wrong costs nothing.
+
+If you want a genuine content filter, the honest version is a cheap **visual**
+triage: a small vision model answering one yes/no question at low resolution,
+which is far quicker than a full extraction. That looks at the actual image, so
+it can tell a receipt from a greeting. It has not been built or measured.
+
 ## Measure before you commit
 
 Estimates are not measurements. Before starting a run over thousands of
