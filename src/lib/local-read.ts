@@ -105,29 +105,30 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
           "ngrok-skip-browser-warning": "true",
         },
       });
-      if (!isInterstitial(direct)) return direct;
-      if (isGenerationRequest) {
-        throw new LocalUnreachableError(
-          parsed.origin,
-          "the tunnel returned an HTML warning page. Configure the tunnel to pass requests directly to Ollama",
-        );
-      }
+      if (!isInterstitial(direct) && direct.status !== 403) return direct;
+      // A 403 from Ollama means it refused this page's origin. The hosted relay
+      // carries no browser origin, so it is the only remaining path.
     } catch (error) {
       if (error instanceof LocalUnreachableError) throw error;
-      if (isGenerationRequest) {
-        // Never send slow vision inference through the hosted relay. The relay
-        // has a shorter request lifetime than local models and turns an
-        // otherwise healthy Ollama run into a platform 502. Listing/pulling
-        // models remains safe to relay because those calls answer promptly.
-        throw new LocalUnreachableError(
-          parsed.origin,
-          "the browser could not connect directly through the tunnel. Allow this app's origin in Ollama CORS (for example OLLAMA_ORIGINS=*) and restart Ollama; long document reads cannot use the hosted relay",
-        );
-      }
-      // Older Ollama setups may reject the browser preflight for short control
-      // requests. Preserve the bounded relay only for those quick operations.
+      // Browser-side block (CORS/mixed content). Fall through to the relay.
     }
-    return fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
+    // Relay path: bounded body, no browser origin. Slow vision inference can
+    // still exceed the hosted request lifetime, so translate a relay failure
+    // into the actionable CORS instruction rather than a bare 502.
+    try {
+      const relayed = await fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
+      if (relayed.ok || !isGenerationRequest) return relayed;
+      if (relayed.status < 500) return relayed;
+      throw new Error(`relay returned ${relayed.status}`);
+    } catch (error) {
+      if (error instanceof LocalUnreachableError) throw error;
+      throw new LocalUnreachableError(
+        parsed.origin,
+        "the browser is refused by Ollama (403 origin) and the backup path could not complete. " +
+          "Set OLLAMA_ORIGINS=* as a system environment variable on the computer running Ollama, fully quit and reopen Ollama, then restart the ngrok tunnel",
+      );
+    }
+
   }
   const res = await fetch(url, init);
   if (!isInterstitial(res)) return res;
