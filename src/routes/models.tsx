@@ -24,6 +24,7 @@ import {
   type ProviderSummary,
 } from "@/lib/ai-settings.functions";
 import { checkLocalEndpoint, isMixedContent, isVisionModel, listLocalModels, pullOllamaModel } from "@/lib/local-read";
+import { LocalConnectionPanel } from "@/components/LocalConnectionPanel";
 
 
 export const Route = createFileRoute("/models")({
@@ -482,6 +483,10 @@ function ModelsPage() {
                     <li>Paste the printed https URL here with <code>/v1</code> on the end and test again.</li>
                   </ol>
                 </div>
+              ) : null}
+
+              {form.runLocation === "browser" && form.baseUrl ? (
+                <LocalConnectionPanel baseUrl={form.baseUrl} />
               ) : null}
 
 
