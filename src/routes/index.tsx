@@ -136,6 +136,7 @@ function Home() {
   const [openLog, setOpenLog] = useState<string | null>(null);
   const [rate, setRate] = useState<{ bytesPerSecond: number; etaSeconds: number } | null>(null);
   const [snapshot, setSnapshot] = useState<UploadSnapshot | null>(null);
+  const [checkpoints, setCheckpoints] = useState<ZipCheckpoint[]>([]);
   const requeue = useServerFn(requeueAttachments);
   const pausedRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -156,6 +157,12 @@ function Home() {
     }
   }, []);
 
+
+  // Unfinished zips this browser has seen. Refreshed whenever a run ends, so
+  // a failed upload immediately offers a resume instead of a fresh start.
+  useEffect(() => {
+    setCheckpoints(listZipCheckpoints());
+  }, [busy]);
 
   useEffect(() => {
     supabase
@@ -610,8 +617,68 @@ function Home() {
                   >
                     Select zip file
                   </Button>
+                  {checkpoints.length > 0 ? (
+                    <div className="mt-4 space-y-2 rounded-lg border border-border/60 bg-card/60 p-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        Unfinished archives
+                      </p>
+                      {checkpoints.map((point) => (
+                        <div key={point.key} className="space-y-1.5 border-t border-border/50 pt-2 first:border-0 first:pt-0">
+                          <p className="text-sm text-foreground">
+                            {point.zipName} ·{" "}
+                            {point.total > 0
+                              ? `${point.done.toLocaleString()} of ${point.total.toLocaleString()} files`
+                              : point.message}
+                            {point.failed > 0 ? ` · ${point.failed.toLocaleString()} failed` : ""}
+                          </p>
+                          {point.total > 0 ? (
+                            <Progress value={Math.min(100, Math.round((point.done / point.total) * 100))} />
+                          ) : null}
+                          <p className="text-xs text-muted-foreground">
+                            {point.bytesTotal > 0
+                              ? `${formatBytes(point.bytesDone)} of ${formatBytes(point.bytesTotal)} · `
+                              : ""}
+                            last seen {new Date(point.updatedAt).toLocaleString()}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setResumeId(point.importId);
+                                toast.info("Choose the same zip — only the missing files are sent.");
+                                inputRef.current?.click();
+                              }}
+                            >
+                              <Play className="size-4" />
+                              Resume
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                clearZipCheckpoint(point.key);
+                                setCheckpoints(listZipCheckpoints());
+                              }}
+                            >
+                              Forget
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-2 pt-2">
-                    <Button size="sm" variant="outline" disabled>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={checkpoints.length === 0}
+                      onClick={() => {
+                        const latest = checkpoints[0];
+                        if (!latest) return;
+                        setResumeId(latest.importId);
+                        inputRef.current?.click();
+                      }}
+                    >
                       Resume
                     </Button>
                     <Button size="sm" variant="outline" disabled>
