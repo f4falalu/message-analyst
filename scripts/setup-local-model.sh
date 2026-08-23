@@ -24,6 +24,10 @@ MODELS=()
 
 for arg in "$@"; do
   case "$arg" in
+    # Interactive zsh does not strip `#` comments, so a pasted command with a
+    # trailing "# note" arrives here as arguments. Ignore everything from it on
+    # rather than trying to `ollama pull look`.
+    \#*) break ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "Unknown option: $arg" >&2; exit 2 ;;
