@@ -19,9 +19,7 @@ import type { LocalJob, LocalProviderInfo } from "./local-read.functions";
 export class LocalUnreachableError extends Error {
   readonly unreachable = true;
   constructor(baseUrl: string, detail: string) {
-    super(
-      `Could not reach the model on this computer (${baseUrl}): ${detail}. Check it is running and that it allows requests from this page.`,
-    );
+    super(`Could not reach the model on this computer (${baseUrl}): ${detail}`);
     this.name = "LocalUnreachableError";
   }
 }
@@ -141,6 +139,34 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
   return retry;
 }
 
+/**
+ * Verify that the browser itself can cross the tunnel. Using the hosted relay
+ * here would hide an Ollama CORS failure and make the quick check pass even
+ * though long-running document reads cannot follow the same path.
+ */
+async function fetchBrowserDirect(url: string, init: RequestInit = {}): Promise<Response> {
+  const parsed = new URL(url);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)
+          ? { "ngrok-skip-browser-warning": "true" }
+          : {}),
+      },
+    });
+    if (isInterstitial(response)) throw new TunnelInterstitialError(parsed.origin);
+    return response;
+  } catch (error) {
+    if (error instanceof LocalUnreachableError || error instanceof TunnelInterstitialError) throw error;
+    throw new LocalUnreachableError(
+      parsed.origin,
+      "the browser connection was blocked. Start Ollama with OLLAMA_ORIGINS=* and then restart both Ollama and the ngrok tunnel",
+    );
+  }
+}
+
 async function responseError(res: Response): Promise<Error> {
   const text = await res.text();
   try {
@@ -217,7 +243,18 @@ export type EndpointCheck = {
  */
 export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck> {
   try {
-    const models = await listLocalModels(baseUrl);
+    const base = trimBase(baseUrl);
+    const modelsResponse = await fetchBrowserDirect(`${base}/models`);
+    if (!modelsResponse.ok) {
+      throw new LocalUnreachableError(
+        base,
+        modelsResponse.status === 403
+          ? "Ollama rejected this app's origin (403). Start Ollama with OLLAMA_ORIGINS=* and restart the ngrok tunnel"
+          : `the endpoint returned ${modelsResponse.status}`,
+      );
+    }
+    const payload = (await modelsResponse.json()) as { data?: { id?: string }[] };
+    const models = Array.from(new Set((payload.data ?? []).map((entry) => entry.id).filter((id): id is string => Boolean(id))));
     const visionModels = models.filter(isVisionModel);
     if (models.length === 0) {
       return {
@@ -459,6 +496,7 @@ async function readMediaBlock(
       body: JSON.stringify({ ...body, stream: true }),
     });
   } catch (error) {
+    if (error instanceof LocalUnreachableError) throw error;
     throw new LocalUnreachableError(base, error instanceof Error ? error.message : "no response");
   }
   if (!response.ok) throw await responseError(response);
