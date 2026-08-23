@@ -13,6 +13,7 @@ import {
   type ExtractedDoc,
 } from "./doc-extract";
 import { pdfToImageDataUrls } from "./pdf-raster";
+import { SUGGESTED_LOCAL_MODEL } from "./ai-models";
 import type { LocalJob, LocalProviderInfo } from "./local-read.functions";
 
 /** The endpoint could not be reached at all — the file stays "waiting". */
@@ -195,12 +196,82 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
 /**
  * Model ids that can actually look at a scan. Text-only models silently return
  * nothing useful, so a run should never start on one.
+ *
+ * This is the *fallback* signal only. Ollama can answer the question directly
+ * (see `fetchVisionCapability`) and an authoritative answer always wins. Names
+ * are guesswork, so keep this list conservative: wrongly calling a text-only
+ * model "vision" costs a multi-hour run that produces nothing, which is a worse
+ * outcome than being told to double-check the model.
+ *
+ * Bare `ocr` covers the document-specialist family (glm-ocr, deepseek-ocr,
+ * got-ocr, nanonets-ocr, olmocr …), which the previous `got-ocr`-only pattern
+ * rejected outright.
  */
 const VISION_HINTS =
-  /(vl|vision|llava|bakllava|moondream|minicpm-v|internvl|pixtral|gemma3|granite3\.?2-vision|qwen2\.?5vl|qwen3-vl|llama3\.2-vision|gpt-4o|gemini|claude|florence|docling|got-ocr|nanonets)/i;
+  /(vl|vision|ocr|llava|bakllava|moondream|minicpm-v|internvl|pixtral|gemma3|gemma4|medgemma|granite3\.?2-vision|qwen2\.?5vl|qwen3-vl|llama3\.2-vision|gpt-4o|gemini|claude|florence|docling|nanonets)/i;
 
 export function isVisionModel(id: string): boolean {
   return VISION_HINTS.test(id);
+}
+
+/**
+ * Ask the endpoint what a model can actually do rather than guessing from its
+ * name. Ollama's `/api/show` reports `capabilities: ["completion", "vision"]`.
+ *
+ * Returns null when the endpoint does not implement it (LM Studio, vLLM and
+ * llama.cpp serve the OpenAI surface only), so the caller knows to fall back to
+ * the name heuristic instead of treating "no answer" as "not vision".
+ */
+export async function fetchVisionCapability(
+  baseUrl: string,
+  model: string,
+): Promise<boolean | null> {
+  const root = trimBase(baseUrl).replace(/\/v1$/, "");
+  try {
+    const res = await fetchApi(`${root}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (!res.ok) return null;
+    const payload = (await res.json()) as { capabilities?: unknown };
+    if (!Array.isArray(payload.capabilities)) return null;
+    return payload.capabilities.some(
+      (entry) => typeof entry === "string" && entry.toLowerCase() === "vision",
+    );
+  } catch {
+    return null;
+  }
+}
+
+export type VisionResolution = {
+  visionModels: string[];
+  /** True when at least one verdict came from the endpoint, not from a name. */
+  authoritative: boolean;
+};
+
+/**
+ * Split a model list into those that can read a picture, preferring the
+ * endpoint's own answer and falling back to the name heuristic per model.
+ * `/api/show` is metadata only (no inference), so asking in parallel is cheap
+ * even over a tunnel.
+ */
+export async function resolveVisionModels(
+  baseUrl: string,
+  models: string[],
+): Promise<VisionResolution> {
+  const verdicts = await Promise.all(
+    models.map(async (model) => ({
+      model,
+      reported: await fetchVisionCapability(baseUrl, model),
+    })),
+  );
+  return {
+    visionModels: verdicts
+      .filter(({ model, reported }) => reported ?? isVisionModel(model))
+      .map(({ model }) => model),
+    authoritative: verdicts.some(({ reported }) => reported !== null),
+  };
 }
 
 export type EndpointCheck = {
@@ -228,28 +299,36 @@ export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck
     }
     const payload = (await modelsResponse.json()) as { data?: { id?: string }[] };
     const models = Array.from(new Set((payload.data ?? []).map((entry) => entry.id).filter((id): id is string => Boolean(id))));
-    const visionModels = models.filter(isVisionModel);
     if (models.length === 0) {
       return {
         ok: false,
         models,
-        visionModels,
+        visionModels: [],
         detail: "Reachable, but it listed no models. Pull or load a vision model first.",
       };
     }
+
+    const { visionModels, authoritative } = await resolveVisionModels(base, models);
     if (visionModels.length === 0) {
       return {
         ok: false,
         models,
         visionModels,
-        detail: `Reachable with ${models.length} model${models.length === 1 ? "" : "s"}, but none of them can read pictures. Pull a vision model (e.g. qwen2.5vl:7b or llama3.2-vision:11b) before starting a run.`,
+        detail:
+          `Reachable with ${models.length} model${models.length === 1 ? "" : "s"}, but none of them can read pictures. ` +
+          `Pull a vision model before starting a run. On a CPU-only machine start with ${SUGGESTED_LOCAL_MODEL}.`,
       };
     }
     return {
       ok: true,
       models,
       visionModels,
-      detail: `Reachable — ${visionModels.length} vision-capable model${visionModels.length === 1 ? "" : "s"} of ${models.length} available (${visionModels.slice(0, 3).join(", ")}).`,
+      detail:
+        `Reachable: ${visionModels.length} vision-capable model${visionModels.length === 1 ? "" : "s"} of ${models.length} available ` +
+        `(${visionModels.slice(0, 3).join(", ")})` +
+        (authoritative
+          ? "."
+          : ", identified by name because this endpoint does not report capabilities."),
     };
   } catch (error) {
     return {
