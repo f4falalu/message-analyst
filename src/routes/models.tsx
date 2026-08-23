@@ -530,7 +530,7 @@ function ModelsPage() {
                   <Input
                     className="max-w-xs font-mono text-xs"
                     value={pullInput}
-                    placeholder="qwen2.5vl:7b"
+                    placeholder="qwen3-vl:2b"
                     onChange={(e) => setPullInput(e.target.value)}
                   />
                   <Button
@@ -542,7 +542,7 @@ function ModelsPage() {
                   >
                     {pulling ? "Pulling…" : "Pull & pin"}
                   </Button>
-                  {["qwen2.5vl:7b", "llama3.2-vision:11b", "minicpm-v:8b"].map((tag) => (
+                  {["qwen3-vl:2b", "qwen3-vl:4b", "minicpm-v4.6:1b", "glm-ocr"].map((tag) => (
                     <Button
                       key={tag}
                       type="button"
@@ -560,7 +560,7 @@ function ModelsPage() {
                 ) : null}
                 <p className="text-xs text-muted-foreground">
                   Downloads the tag onto this machine through Ollama and pins that exact version
-                  (e.g. <span className="font-mono">qwen2.5vl:7b</span>, never a moving "latest"), so
+                  (e.g. <span className="font-mono">qwen3-vl:2b</span>, never a moving "latest"), so
                   every page is read by the same model.
                 </p>
               </div>
