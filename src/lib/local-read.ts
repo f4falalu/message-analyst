@@ -140,34 +140,6 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
   return retry;
 }
 
-/**
- * Verify that the browser itself can cross the tunnel. Using the hosted relay
- * here would hide an Ollama CORS failure and make the quick check pass even
- * though long-running document reads cannot follow the same path.
- */
-async function fetchBrowserDirect(url: string, init: RequestInit = {}): Promise<Response> {
-  const parsed = new URL(url);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        ...(init.headers as Record<string, string> | undefined),
-        ...(/\.ngrok-free\.(app|dev)$/i.test(parsed.hostname)
-          ? { "ngrok-skip-browser-warning": "true" }
-          : {}),
-      },
-    });
-    if (isInterstitial(response)) throw new TunnelInterstitialError(parsed.origin);
-    return response;
-  } catch (error) {
-    if (error instanceof LocalUnreachableError || error instanceof TunnelInterstitialError) throw error;
-    throw new LocalUnreachableError(
-      parsed.origin,
-      "the browser connection was blocked. Start Ollama with OLLAMA_ORIGINS=* and then restart both Ollama and the ngrok tunnel",
-    );
-  }
-}
-
 async function responseError(res: Response): Promise<Error> {
   const text = await res.text();
   try {
