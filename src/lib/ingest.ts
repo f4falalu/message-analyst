@@ -27,6 +27,75 @@ const MAX_ATTEMPTS = 4;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * A durable marker for one zip's progress, kept in this browser. A tab crash or
+ * a lost connection therefore never costs the work already done: picking the
+ * same zip again continues the same import from the files still missing.
+ */
+export type ZipCheckpoint = {
+  key: string;
+  zipName: string;
+  zipSize: number;
+  importId: string | null;
+  phase: IngestProgress["phase"];
+  message: string;
+  done: number;
+  total: number;
+  bytesDone: number;
+  bytesTotal: number;
+  failed: number;
+  updatedAt: number;
+};
+
+const CHECKPOINT_PREFIX = "zip-checkpoint:";
+
+export function zipCheckpointKey(file: File): string {
+  return `${CHECKPOINT_PREFIX}${file.name}:${file.size}`;
+}
+
+function writeCheckpoint(checkpoint: ZipCheckpoint) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(checkpoint.key, JSON.stringify(checkpoint));
+  } catch {
+    /* storage full or blocked — progress tracking is best-effort */
+  }
+}
+
+export function readZipCheckpoint(file: File): ZipCheckpoint | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(zipCheckpointKey(file));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ZipCheckpoint;
+  } catch {
+    window.localStorage.removeItem(zipCheckpointKey(file));
+    return null;
+  }
+}
+
+/** Every unfinished zip this browser knows about, newest first. */
+export function listZipCheckpoints(): ZipCheckpoint[] {
+  if (typeof window === "undefined") return [];
+  const out: ZipCheckpoint[] = [];
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (!key?.startsWith(CHECKPOINT_PREFIX)) continue;
+    try {
+      const value = JSON.parse(window.localStorage.getItem(key) ?? "") as ZipCheckpoint;
+      if (value && value.phase !== "done") out.push(value);
+    } catch {
+      /* skip a corrupt entry */
+    }
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function clearZipCheckpoint(key: string) {
+  if (typeof window !== "undefined") window.localStorage.removeItem(key);
+}
+
+
 
 
 function baseName(path: string): string {
@@ -79,7 +148,30 @@ export async function ingestZip(
   const isCancelled = () => control?.isCancelled() === true;
   const isPaused = () => control?.isPaused() === true;
 
-
+  // Every progress tick is mirrored into a checkpoint, so the last known
+  // position of a multi-gigabyte archive survives a crash or a closed tab.
+  const key = zipCheckpointKey(file);
+  const saved = readZipCheckpoint(file);
+  let checkpointImportId = options.resumeImportId ?? saved?.importId ?? null;
+  let failedCount = 0;
+  const emit = (progress: IngestProgress) => {
+    onProgress(progress);
+    writeCheckpoint({
+      key,
+      zipName: file.name,
+      zipSize: file.size,
+      importId: checkpointImportId,
+      phase: progress.phase,
+      message: progress.message,
+      done: progress.current,
+      total: progress.total,
+      bytesDone: progress.bytesDone ?? 0,
+      bytesTotal: progress.bytesTotal ?? 0,
+      failed: failedCount,
+      updatedAt: Date.now(),
+    });
+  };
+  onProgress = emit;
 
   onProgress({ phase: "reading", message: "Opening the zip file…", current: 0, total: 0 });
 
@@ -102,16 +194,21 @@ export async function ingestZip(
 
   let importId: string;
   let alreadyParsed = false;
-  if (options.resumeImportId) {
-    const { data: existing, error: existingError } = await supabase
-      .from("imports")
-      .select("id, chat_parsed, message_count")
-      .eq("id", options.resumeImportId)
-      .maybeSingle();
-    if (existingError) throw new Error(existingError.message);
-    if (!existing) throw new Error("That import no longer exists — start a fresh upload.");
+  // An explicit resume must find its import; a checkpoint-only guess quietly
+  // falls back to a fresh import when that record has since been deleted.
+  const resumeTarget = options.resumeImportId ?? checkpointImportId;
+  const existingRow = resumeTarget
+    ? await supabase.from("imports").select("id, chat_parsed, message_count").eq("id", resumeTarget).maybeSingle()
+    : null;
+  if (existingRow?.error) throw new Error(existingRow.error.message);
+  if (options.resumeImportId && !existingRow?.data) {
+    throw new Error("That import no longer exists — start a fresh upload.");
+  }
+  if (existingRow?.data) {
+    const existing = existingRow.data;
     importId = existing.id;
     alreadyParsed = existing.chat_parsed === true && existing.message_count === parsed.messages.length;
+
 
     const { error: updateError } = await supabase
       .from("imports")
@@ -139,6 +236,8 @@ export async function ingestZip(
     if (importError || !importRow) throw new Error(importError?.message ?? "Could not create the import.");
     importId = importRow.id;
   }
+  checkpointImportId = importId;
+
 
   try {
     // Messages + contacts first, so attachments can be linked by filename.
@@ -344,6 +443,7 @@ export async function ingestZip(
               reason: uploadError instanceof Error ? uploadError.message : String(uploadError),
             });
             bytesDone += entrySize(entry);
+            failedCount = failed.length;
             break;
           }
           if (isCancelled()) break;
@@ -384,6 +484,12 @@ export async function ingestZip(
       current: 1,
       total: 1,
     });
+
+    // Only a complete, uninterrupted upload retires the checkpoint; anything
+    // else stays so the same zip can be resumed later.
+    if (!cancelled && failed.length === 0) clearZipCheckpoint(key);
+
+
 
     return {
       importId,
