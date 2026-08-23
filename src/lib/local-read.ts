@@ -127,6 +127,7 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
     // the hosted relay request lifetime, which otherwise produces an HTML 502
     // even though Ollama is still working. A correctly configured Ollama/ngrok
     // endpoint permits this request through CORS.
+    let directError: string | null = null;
     try {
       const direct = await fetch(url, {
         ...init,
@@ -136,31 +137,40 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
         },
       });
       if (!isInterstitial(direct) && direct.status !== 403) return direct;
+      directError = direct.status === 403 ? "Ollama refused this page's origin (403)" : "the tunnel returned its browser warning page";
       // A 403 from Ollama means it refused this page's origin. The hosted relay
       // carries no browser origin, so it is the only remaining path.
     } catch (error) {
       if (error instanceof LocalUnreachableError) throw error;
+      directError = error instanceof Error ? error.message : "no response";
       // Browser-side block (CORS/mixed content). Fall through to the relay.
     }
-    // Relay path: bounded body, no browser origin. Slow vision inference can
-    // still exceed the hosted request lifetime, so translate a relay failure
-    // into the actionable CORS instruction rather than a bare 502.
+
+    // Generation never goes through the relay. Vision inference on a CPU runs
+    // for minutes, far beyond the hosted request lifetime, so the relay always
+    // ends in an HTML 502 that surfaces as a blank error screen. Report the
+    // actionable CORS fix instead.
+    if (isGenerationRequest) {
+      throw new LocalUnreachableError(
+        parsed.origin,
+        `${directError}. Set OLLAMA_ORIGINS=* as a system environment variable on the computer running Ollama, fully quit and reopen Ollama, then restart the ngrok tunnel`,
+      );
+    }
+
+    // Short metadata calls (models, tags, show, pull) are safe to relay.
     try {
-      const relayed = await fetch(
+      return await fetch(
         `/api/public/local-model-relay?target=${encodeURIComponent(url)}`,
         init,
       );
-      if (relayed.ok || !isGenerationRequest) return relayed;
-      if (relayed.status < 500) return relayed;
-      throw new Error(`relay returned ${relayed.status}`);
     } catch (error) {
       if (error instanceof LocalUnreachableError) throw error;
       throw new LocalUnreachableError(
         parsed.origin,
-        "the browser is refused by Ollama (403 origin) and the backup path could not complete. " +
-          "Set OLLAMA_ORIGINS=* as a system environment variable on the computer running Ollama, fully quit and reopen Ollama, then restart the ngrok tunnel",
+        `${directError}. Set OLLAMA_ORIGINS=* as a system environment variable on the computer running Ollama, fully quit and reopen Ollama, then restart the ngrok tunnel`,
       );
     }
+
   }
   const res = await fetch(url, init);
   if (!isInterstitial(res)) return res;
