@@ -135,12 +135,72 @@ describe("normalise", () => {
       expect(normalise({ document_date: "2026-08-23T14:26:18Z" }).document_date).toBe("2026-08-23");
     });
 
-    // Documented limitation, not an endorsement. The prompt asks for YYYY-MM-DD,
-    // and anything else is discarded silently rather than mis-parsed. Worth
-    // revisiting if real extractions come back with local date formats.
-    it("discards non-ISO formats instead of guessing day/month order", () => {
-      expect(normalise({ document_date: "23/08/2026" }).document_date).toBeNull();
-      expect(normalise({ document_date: "Aug 23, 2026" }).document_date).toBeNull();
+    // Regression, found by running a real document through
+    // qwen3-vl:2b-instruct: the model read "14/08/2026" correctly and the
+    // extraction stored null, silently losing every date in the run. Larger
+    // models convert to ISO themselves, which is how this stayed hidden.
+    describe("day-first slashed dates, as written on the source documents", () => {
+      it("reads the case that was being dropped", () => {
+        expect(normalise({ document_date: "14/08/2026" }).document_date).toBe("2026-08-14");
+        expect(normalise({ payment_date: "21/08/2026" }).payment_date).toBe("2026-08-21");
+      });
+
+      it("accepts dash and dot separators", () => {
+        expect(normalise({ document_date: "14-08-2026" }).document_date).toBe("2026-08-14");
+        expect(normalise({ document_date: "14.08.2026" }).document_date).toBe("2026-08-14");
+      });
+
+      it("accepts single-digit day and month", () => {
+        expect(normalise({ document_date: "4/8/2026" }).document_date).toBe("2026-08-04");
+      });
+
+      it("tolerates spaces around the separators", () => {
+        expect(normalise({ document_date: "14 / 08 / 2026" }).document_date).toBe("2026-08-14");
+      });
+    });
+
+    describe("resolves ambiguity by what the numbers allow", () => {
+      it("treats a first component above 12 as the day", () => {
+        expect(normalise({ document_date: "25/03/2026" }).document_date).toBe("2026-03-25");
+      });
+
+      it("falls back to month-first when only that reading is possible", () => {
+        // 08/25/2026 cannot be day-first: there is no 25th month.
+        expect(normalise({ document_date: "08/25/2026" }).document_date).toBe("2026-08-25");
+      });
+
+      // ASSUMPTION under test, not a law of nature. These documents are
+      // Nigerian, where day/month/year is the convention. If that changes, this
+      // is the test that should fail first.
+      it("reads a genuinely ambiguous date as day-first", () => {
+        expect(normalise({ document_date: "03/08/2026" }).document_date).toBe("2026-08-03");
+      });
+    });
+
+    describe("rejects what it cannot trust", () => {
+      it("refuses impossible calendar dates rather than rolling them over", () => {
+        expect(normalise({ document_date: "31/02/2026" }).document_date).toBeNull();
+        expect(normalise({ document_date: "32/01/2026" }).document_date).toBeNull();
+        expect(normalise({ document_date: "00/01/2026" }).document_date).toBeNull();
+      });
+
+      it("refuses a month above 12 in both readings", () => {
+        expect(normalise({ document_date: "13/25/2026" }).document_date).toBeNull();
+      });
+
+      it("still refuses prose dates, which carry no reliable order", () => {
+        expect(normalise({ document_date: "Aug 23, 2026" }).document_date).toBeNull();
+        expect(normalise({ document_date: "sometime in August" }).document_date).toBeNull();
+      });
+
+      it("refuses two-digit years rather than guessing the century", () => {
+        expect(normalise({ document_date: "14/08/26" }).document_date).toBeNull();
+      });
+
+      it("keeps a leap day that exists and rejects one that does not", () => {
+        expect(normalise({ document_date: "29/02/2024" }).document_date).toBe("2024-02-29");
+        expect(normalise({ document_date: "29/02/2026" }).document_date).toBeNull();
+      });
     });
   });
 
@@ -286,4 +346,28 @@ describe("COMPACT_SYSTEM_PROMPT", () => {
     expect(result.raw_text).toBe("");
     expect(result.field_confidence.total_amount).toBeNull();
   });
+});
+
+// Both prompts carry guidance that was added because a real model got it wrong
+// on real documents. These are regression guards on the guidance existing, not
+// on its exact wording.
+describe("prompt guidance earned by measured failures", () => {
+  for (const [name, prompt] of [
+    ["SYSTEM_PROMPT", SYSTEM_PROMPT],
+    ["COMPACT_SYSTEM_PROMPT", COMPACT_SYSTEM_PROMPT],
+  ] as const) {
+    describe(name, () => {
+      // qwen3-vl:2b-instruct returned "Kano State Primary Healthcare Board",
+      // the parent body, instead of the health post named on the page.
+      it("distinguishes the facility from its parent body", () => {
+        expect(prompt).toMatch(/never the parent body/i);
+      });
+
+      // The same model emitted "14/08/2026" and the ISO-only parser dropped it.
+      it("asks for ISO dates and states the day-first convention", () => {
+        expect(prompt).toMatch(/YYYY-MM-DD/);
+        expect(prompt).toMatch(/day\/month\/year/i);
+      });
+    });
+  }
 });

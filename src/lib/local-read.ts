@@ -534,7 +534,11 @@ async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]>
 
   try {
     const longest = Math.max(bitmap.width, bitmap.height);
-    let scale = Math.min(1, 1600 / longest);
+    // 900px, measured. Qwen3-VL's dynamic resolution floors at ~1,351 prompt
+    // tokens below this, so shrinking further costs detail and buys nothing,
+    // while 1600px costs 2,087 tokens and ~50 extra seconds per document on a
+    // CPU-only host. Prefill, not generation, is the dominant cost there.
+    let scale = Math.min(1, 900 / longest);
     let quality = 0.78;
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
