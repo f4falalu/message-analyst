@@ -245,7 +245,7 @@ export type EndpointCheck = {
 export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck> {
   try {
     const base = trimBase(baseUrl);
-    const modelsResponse = await fetchBrowserDirect(`${base}/models`);
+    const modelsResponse = await fetchApi(`${base}/models`);
     if (!modelsResponse.ok) {
       throw new LocalUnreachableError(
         base,
