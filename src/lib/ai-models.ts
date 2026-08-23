@@ -16,7 +16,7 @@ export type ProviderPreset = {
  * memory bandwidth, so size on disk predicts speed better than anything else:
  * this is the smallest reader that still handles real paperwork.
  */
-export const SUGGESTED_LOCAL_MODEL = "qwen3-vl:2b";
+export const SUGGESTED_LOCAL_MODEL = "qwen3-vl:2b-instruct";
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -27,7 +27,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     keyHint: "openrouter.ai/keys",
     supportsPdf: true,
     models: [
-      { id: "qwen/qwen3-vl-235b-a22b-instruct", label: "Qwen3-VL 235B (Alibaba, open weights)", note: "Strong document OCR" },
+      {
+        id: "qwen/qwen3-vl-235b-a22b-instruct",
+        label: "Qwen3-VL 235B (Alibaba, open weights)",
+        note: "Strong document OCR",
+      },
       { id: "qwen/qwen2.5-vl-72b-instruct", label: "Qwen2.5-VL 72B (Alibaba, open weights)" },
       { id: "z-ai/glm-4.6v", label: "GLM-4.6V (Zhipu, open weights)" },
       { id: "deepseek/deepseek-chat", label: "DeepSeek V3 (text only)" },
@@ -128,13 +132,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // is the most honest performance number we can give up front.
     models: [
       {
-        id: "qwen3-vl:2b",
-        label: "Qwen3-VL 2B (local)",
-        note: "1.9 GB. Best starting point on a CPU-only machine",
+        id: "qwen3-vl:2b-instruct",
+        label: "Qwen3-VL 2B Instruct (local)",
+        note: "1.9 GB. Best starting point on a CPU-only machine. Use the -instruct tag: plain qwen3-vl:2b reasons before answering and can return no answer at all",
       },
       {
-        id: "qwen3-vl:4b",
-        label: "Qwen3-VL 4B (local)",
+        id: "qwen3-vl:4b-instruct",
+        label: "Qwen3-VL 4B Instruct (local)",
         note: "3.3 GB. More accurate, roughly half the speed of 2B",
       },
       {

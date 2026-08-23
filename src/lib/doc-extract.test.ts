@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildChatBody, normalise, parseJsonLoose, SYSTEM_PROMPT } from "./doc-extract";
+import {
+  buildChatBody,
+  COMPACT_SYSTEM_PROMPT,
+  normalise,
+  parseJsonLoose,
+  SYSTEM_PROMPT,
+} from "./doc-extract";
 
 // Everything here handles output from a model that was *asked* for strict JSON
 // but is under no obligation to produce it. Small local models drift from the
@@ -201,5 +207,83 @@ describe("buildChatBody", () => {
     const body = buildChatBody({ model: "m", userText: "Read it." });
     const messages = body["messages"] as { role: string; content: unknown[] }[];
     expect(messages[1]?.content).toEqual([{ type: "text", text: "Read it." }]);
+  });
+
+  it("omits max_tokens unless asked, so hosted providers keep their defaults", () => {
+    expect(buildChatBody({ model: "m", userText: "x" })).not.toHaveProperty("max_tokens");
+    expect(buildChatBody({ model: "m", userText: "x", maxTokens: 700 })["max_tokens"]).toBe(700);
+  });
+});
+
+// Generation is 97% of the time per document on a CPU-only host, so output
+// length is the cost. These assertions guard the properties that make the
+// compact schema cheaper, not its exact wording.
+describe("COMPACT_SYSTEM_PROMPT", () => {
+  it("is selected by the compact flag", () => {
+    const body = buildChatBody({ model: "m", userText: "x", compact: true });
+    const messages = body["messages"] as { role: string; content: string }[];
+    expect(messages[0]?.content).toBe(COMPACT_SYSTEM_PROMPT);
+  });
+
+  it("defaults to the full schema when the flag is absent", () => {
+    const body = buildChatBody({ model: "m", userText: "x" });
+    const messages = body["messages"] as { role: string; content: string }[];
+    expect(messages[0]?.content).toBe(SYSTEM_PROMPT);
+  });
+
+  it("drops the two most expensive fields", () => {
+    expect(COMPACT_SYSTEM_PROMPT).not.toContain("raw_text");
+    expect(COMPACT_SYSTEM_PROMPT).not.toContain("field_confidence");
+    expect(SYSTEM_PROMPT).toContain("raw_text");
+  });
+
+  it("still asks for every field the spreadsheet is built from", () => {
+    for (const key of [
+      "doc_type",
+      "facility_name",
+      "items",
+      "total_amount",
+      "currency",
+      "document_date",
+      "payment_date",
+      "contact_name",
+      "contact_phone",
+      "reference",
+      "confidence",
+    ]) {
+      expect(COMPACT_SYSTEM_PROMPT).toContain(key);
+    }
+  });
+
+  it("asks for single-line output, since pretty-printing costs real tokens", () => {
+    expect(COMPACT_SYSTEM_PROMPT).toMatch(/single line/i);
+  });
+
+  it("is materially shorter than the full prompt", () => {
+    expect(COMPACT_SYSTEM_PROMPT.length).toBeLessThan(SYSTEM_PROMPT.length);
+  });
+
+  it("still normalises into the same shape, with the dropped fields defaulted", () => {
+    // What a compact reply looks like: no raw_text, no field_confidence.
+    const reply = {
+      doc_type: "receipt",
+      facility_name: "Kofar Mata PHC",
+      items: [{ name: "Gloves", quantity: 20, unit: "box", amount: 30000 }],
+      total_amount: 52800,
+      currency: "NGN",
+      document_date: "2026-08-14",
+      payment_date: "2026-08-21",
+      contact_name: "Aisha Bello",
+      contact_phone: "0803 555 0142",
+      reference: "REQ-2026-0142",
+      confidence: 0.9,
+    };
+    const result = normalise(reply);
+    expect(result.total_amount).toBe(52800);
+    expect(result.items).toHaveLength(1);
+    expect(result.document_date).toBe("2026-08-14");
+    // Absent fields degrade to safe defaults rather than breaking the row.
+    expect(result.raw_text).toBe("");
+    expect(result.field_confidence.total_amount).toBeNull();
   });
 });

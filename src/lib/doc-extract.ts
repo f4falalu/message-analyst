@@ -64,6 +64,34 @@ raw_text: a plain-text transcription of the document (keep it under 4000 charact
 confidence: 0 to 1, how sure you are the structured fields are correct.
 field_confidence: 0 to 1 per field, how legible/certain that specific field was. Use null for fields that are absent from the document.`;
 
+/**
+ * The same extraction with the two most expensive fields removed.
+ *
+ * Measured on a CPU-only host: generation runs at 1.7-3.0 tok/s and accounts
+ * for 97% of the time per document, so output length is the cost. A full read
+ * emitted 555 tokens, of which `raw_text` (a whole transcription) and
+ * `field_confidence` (six extra numbers) were roughly 220, before counting the
+ * whitespace of pretty-printed JSON.
+ *
+ * What you give up: `raw_text` powers the file-detail transcription view and
+ * the MCP get-record tool, and `field_confidence` drives per-field review
+ * flags. Neither feeds record-builder.ts, so the spreadsheet output is
+ * unaffected. `normalise` already defaults both when absent, so nothing
+ * downstream breaks.
+ */
+export const COMPACT_SYSTEM_PROMPT = `You read scanned procurement paperwork exchanged over WhatsApp: supply requests, requisitions, invoices, receipts, payment confirmations and hand-written notes from health facilities.
+
+Transcribe what is actually on the page. Never invent a facility, item, amount or date. Use null when a field is not present or not legible.
+
+Return ONLY a JSON object with exactly these keys:
+{"doc_type":"request"|"receipt"|"invoice"|"other","facility_name":string|null,"items":[{"name":string,"quantity":number|null,"unit":string|null,"amount":number|null}],"total_amount":number|null,"currency":string|null,"document_date":"YYYY-MM-DD"|null,"payment_date":"YYYY-MM-DD"|null,"contact_name":string|null,"contact_phone":string|null,"reference":string|null,"confidence":number}
+
+doc_type: "request" for requisitions/order lists, "invoice" for priced bills, "receipt" for proof of payment, "other" for anything else (photos of people, screenshots, unrelated pages).
+total_amount: numeric only, no currency symbols or thousands separators.
+confidence: 0 to 1, how sure you are the structured fields are correct.
+
+Output the JSON on a single line with no line breaks, no indentation and no explanation. Do not include any key not listed above.`;
+
 export function userTextFor(chatContext: string): string {
   return chatContext
     ? `Surrounding WhatsApp conversation (context only — the document itself is authoritative):\n${chatContext}\n\nRead the attached document.`
@@ -77,12 +105,21 @@ export function buildChatBody(params: {
   /** One media block, or several (e.g. one per rendered PDF page). */
   mediaBlock?: Record<string, unknown>;
   mediaBlocks?: Record<string, unknown>[];
+  /** Drop raw_text and field_confidence. See COMPACT_SYSTEM_PROMPT. */
+  compact?: boolean;
+  /**
+   * Hard ceiling on generated tokens. Ollama maps this to num_predict. Worth
+   * setting on slow hardware: a model that rambles (or reasons) otherwise runs
+   * until the context fills, which on a CPU-only host is many wasted minutes
+   * per document with nothing to show for it.
+   */
+  maxTokens?: number;
 }): Record<string, unknown> {
   const media = params.mediaBlocks ?? (params.mediaBlock ? [params.mediaBlock] : []);
-  return {
+  const body: Record<string, unknown> = {
     model: params.model,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: params.compact ? COMPACT_SYSTEM_PROMPT : SYSTEM_PROMPT },
       {
         role: "user",
         content: [{ type: "text", text: params.userText }, ...media],
@@ -90,6 +127,8 @@ export function buildChatBody(params: {
     ],
     response_format: { type: "json_object" },
   };
+  if (params.maxTokens !== undefined) body["max_tokens"] = params.maxTokens;
+  return body;
 }
 
 function coerceNumber(value: unknown): number | null {
@@ -112,7 +151,9 @@ export function normalise(input: unknown): ExtractedDoc {
   const raw = (input ?? {}) as Record<string, unknown>;
   const typeValue = String(raw["doc_type"] ?? "other").toLowerCase();
   const docType: ExtractedDoc["doc_type"] =
-    typeValue === "request" || typeValue === "receipt" || typeValue === "invoice" ? typeValue : "other";
+    typeValue === "request" || typeValue === "receipt" || typeValue === "invoice"
+      ? typeValue
+      : "other";
 
   const itemsInput = Array.isArray(raw["items"]) ? (raw["items"] as unknown[]) : [];
   const items = itemsInput
@@ -167,7 +208,11 @@ export function normalise(input: unknown): ExtractedDoc {
 }
 
 export function parseJsonLoose(text: string): unknown {
-  const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const trimmed = text
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
   try {
     return JSON.parse(trimmed);
   } catch {

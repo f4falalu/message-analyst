@@ -164,13 +164,21 @@ function ModelsPage() {
   const checkLocal = async () => {
     setTesting(form.id ?? "local-form");
     const result = await checkLocalEndpoint(form.baseUrl);
+    const detail =
+      result.warnings.length > 0 ? `${result.detail}\n\n${result.warnings.join("\n\n")}` : result.detail;
     setResults((current) => ({
       ...current,
-      [form.id ?? "local-form"]: { ok: result.ok, detail: result.detail, ms: 0 },
+      [form.id ?? "local-form"]: { ok: result.ok, detail, ms: 0 },
     }));
     if (result.models.length > 0) setDiscovered(result.models);
     if (result.ok) toast.success(result.detail);
     else toast.error(result.detail);
+    // A reachable endpoint whose only readers reason before answering will fail
+    // every document after minutes of work. That deserves its own visible
+    // warning rather than being buried in the success message.
+    for (const warning of result.warnings) {
+      toast.warning(warning, { duration: 15_000 });
+    }
     setTesting(null);
   };
 
@@ -530,7 +538,7 @@ function ModelsPage() {
                   <Input
                     className="max-w-xs font-mono text-xs"
                     value={pullInput}
-                    placeholder="qwen3-vl:2b"
+                    placeholder="qwen2.5vl:7b"
                     onChange={(e) => setPullInput(e.target.value)}
                   />
                   <Button
@@ -542,7 +550,7 @@ function ModelsPage() {
                   >
                     {pulling ? "Pulling…" : "Pull & pin"}
                   </Button>
-                  {["qwen3-vl:2b", "qwen3-vl:4b", "minicpm-v4.6:1b", "glm-ocr"].map((tag) => (
+                  {["qwen2.5vl:7b", "llama3.2-vision:11b", "minicpm-v:8b"].map((tag) => (
                     <Button
                       key={tag}
                       type="button"
@@ -560,7 +568,7 @@ function ModelsPage() {
                 ) : null}
                 <p className="text-xs text-muted-foreground">
                   Downloads the tag onto this machine through Ollama and pins that exact version
-                  (e.g. <span className="font-mono">qwen3-vl:2b</span>, never a moving "latest"), so
+                  (e.g. <span className="font-mono">qwen2.5vl:7b</span>, never a moving "latest"), so
                   every page is read by the same model.
                 </p>
               </div>

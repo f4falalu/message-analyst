@@ -118,6 +118,57 @@ the `/v1` suffix, and set "Runs on" to **this computer**.
 A free ngrok tunnel gets a new URL every time it restarts, and the app stores
 the URL, so you will need to update it in the Models page after each restart.
 
+## Getting the most out of CPU-only hardware
+
+Measured on a 2019 Intel MacBook Pro (i5-8279U, 16 GB) over an ngrok tunnel,
+reading a printed requisition with known ground truth:
+
+```text
+qwen2.5vl:7b, full schema
+  prefill    (reading the image)  1,490 tok in    7.2s  = 207 tok/s
+  generation (writing the JSON)     555 tok in  335.3s  =   1.7 tok/s
+                                            ─────────
+                                              344.6s per document
+```
+
+**Generation is 97% of the cost.** Everything below follows from that one fact.
+
+| Lever | Effect | Why |
+|---|---|---|
+| Compact schema | ~1.8x | Drops `raw_text` and `field_confidence`, ~240 of 555 tokens. On by default in the local lane |
+| `-instruct` model tag | ~1.8x | 2B generates at 3.0 tok/s versus 1.7 for the 7B |
+| `OLLAMA_KEEP_ALIVE=-1` | varies | Ollama evicts an idle model after 5 minutes. A document takes longer than that, so the model reloads from disk between documents |
+| `max_tokens` ceiling | bounds worst case | Stops a rambling model burning minutes on one page |
+| Smaller images | no speed gain | Prefill is 2% of the time. Do it to stay inside the 4096-token context, not for speed |
+| **Fewer documents** | **linear** | The only lever that is not capped by hardware |
+
+Things that do **not** help, and why:
+
+- **A smaller model is not proportionally faster.** 2B generates only 1.8x
+  faster than 7B, because both are limited by the same memory bus.
+- **Concurrency does not help on one machine.** `OLLAMA_NUM_PARALLEL` defaults
+  to 1, and raising it splits the same memory bandwidth while multiplying RAM.
+- **Lower image resolution barely matters.** Reading the picture took 7 seconds
+  out of 345.
+
+### The realistic best case
+
+Projected from the measured rates above, not yet measured end to end:
+
+```text
+qwen3-vl:2b-instruct, compact schema
+  prefill      ~1,500 tok at ~250 tok/s  ≈    6s
+  generation     ~300 tok at  3.0 tok/s  ≈  100s
+                                          ───────
+                                          ≈ 106s  (~1.8 min) per document
+```
+
+That is roughly 3x better than the 5.7 minutes measured with the full schema on
+the 7B, and it is close to the floor for this class of hardware. **Per-document
+time will not reach seconds on a CPU-only machine.** For 3,936 documents that is
+about 4.8 days of continuous running; filtering the set down to the images that
+are actually paperwork is what turns that into roughly a day.
+
 ## Measure before you commit
 
 Estimates are not measurements. Before starting a run over thousands of

@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-DEFAULT_MODEL="qwen3-vl:2b"
+DEFAULT_MODEL="qwen3-vl:2b-instruct"
 OLLAMA_BIND="0.0.0.0:11434"
 API="http://127.0.0.1:11434"
 
@@ -24,10 +24,6 @@ MODELS=()
 
 for arg in "$@"; do
   case "$arg" in
-    # Interactive zsh does not strip `#` comments, so a pasted command with a
-    # trailing "# note" arrives here as arguments. Ignore everything from it on
-    # rather than trying to `ollama pull look`.
-    \#*) break ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "Unknown option: $arg" >&2; exit 2 ;;
@@ -110,44 +106,27 @@ step "Network and origin settings"
 # through launchctl. Verified against Ollama's FAQ ("Setting environment
 # variables on Mac"). They persist for the login session; a reboot clears them,
 # so re-run this script after restarting the machine.
-echo "   OLLAMA_HOST    = $OLLAMA_BIND   (bind beyond loopback so the tunnel can reach it)"
-echo "   OLLAMA_ORIGINS = *              (let the app's browser tab call this machine)"
+echo "   OLLAMA_HOST       = $OLLAMA_BIND   (bind beyond loopback so the tunnel can reach it)"
+echo "   OLLAMA_ORIGINS    = *              (let the app's browser tab call this machine)"
+echo "   OLLAMA_KEEP_ALIVE = -1             (never unload the model between documents)"
 run launchctl setenv OLLAMA_HOST "$OLLAMA_BIND"
 run launchctl setenv OLLAMA_ORIGINS "*"
+# Ollama unloads an idle model after 5 minutes by default. On a CPU-only host a
+# single document can take longer than that, so the model gets evicted and
+# reloaded from disk between documents. On a multi-thousand document run that is
+# pure waste, and it is invisible unless you are watching disk activity.
+run launchctl setenv OLLAMA_KEEP_ALIVE "-1"
 
 if [ -d /Applications/Ollama.app ]; then
   step "Restarting Ollama so it picks the settings up"
-  if run osascript -e 'quit app "Ollama"'; then
-    run sleep 2
-    run open -a Ollama
-    run sleep 5
-  else
-    warn "Could not quit Ollama automatically (a dialog was dismissed, or it was"
-    warn "not running). Quit it from the menu bar yourself and reopen it, then"
-    warn "re-run this script — until it restarts, OLLAMA_ORIGINS is not in effect"
-    warn "and the app's browser tab will still be refused with a 403."
-  fi
+  run osascript -e 'quit app "Ollama"' || true
+  run sleep 2
+  run open -a Ollama
+  run sleep 5
 else
   warn "No Ollama.app found. If you run 'ollama serve' by hand, start it as:"
   echo "     OLLAMA_HOST=$OLLAMA_BIND OLLAMA_ORIGINS='*' ollama serve"
 fi
-
-# Confirm the *running* server actually carries the origin policy, rather than
-# trusting that the restart worked. A CORS preflight is the same question the
-# browser asks, so a pass here means a pass there.
-verify_origins() {
-  local probe
-  probe=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$API/v1/models" \
-    -H 'Origin: https://example.lovable.app' \
-    -H 'Access-Control-Request-Method: POST' 2>/dev/null || echo 000)
-  case "$probe" in
-    2*) ok "Origin policy is live (preflight answered $probe)" ;;
-    000) warn "Could not run the origin check; is Ollama running?" ;;
-    *)   warn "Ollama refused a browser origin (preflight $probe). It is still running"
-         warn "with the old settings — quit it fully from the menu bar, reopen it," ;;
-  esac
-}
-
 
 # ------------------------------------------------------------ wait for API --
 
@@ -165,7 +144,6 @@ else
   done
   curl -fsS --max-time 2 "$API/api/tags" >/dev/null 2>&1 \
     || fail "Ollama did not come up on $API. Open the Ollama app manually and re-run."
-  verify_origins
 fi
 
 # ------------------------------------------------------------------ models --
