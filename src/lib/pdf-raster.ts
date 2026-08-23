@@ -17,9 +17,31 @@ type PdfModule = typeof import("pdfjs-dist");
 
 let pdfjsPromise: Promise<PdfModule> | null = null;
 
+/**
+ * pdf.js 6 calls Map.prototype.getOrInsertComputed, a very new proposal that
+ * most shipping browsers do not have yet. Without it every render dies with
+ * "getOrInsertComputed is not a function".
+ */
+function polyfillMapHelpers(): void {
+  const proto = Map.prototype as unknown as Record<string, unknown>;
+  if (typeof proto["getOrInsertComputed"] !== "function") {
+    proto["getOrInsertComputed"] = function <K, V>(this: Map<K, V>, key: K, compute: (key: K) => V): V {
+      if (!this.has(key)) this.set(key, compute(key));
+      return this.get(key) as V;
+    };
+  }
+  if (typeof proto["getOrInsert"] !== "function") {
+    proto["getOrInsert"] = function <K, V>(this: Map<K, V>, key: K, value: V): V {
+      if (!this.has(key)) this.set(key, value);
+      return this.get(key) as V;
+    };
+  }
+}
+
 async function loadPdfjs(): Promise<PdfModule> {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
+      polyfillMapHelpers();
       const pdfjs = await import("pdfjs-dist");
       const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
       pdfjs.GlobalWorkerOptions.workerSrc = worker.default;

@@ -129,13 +129,11 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
     // endpoint permits this request through CORS.
     let directError: string | null = null;
     try {
-      const direct = await fetch(url, {
-        ...init,
-        headers: {
-          ...(init.headers as Record<string, string> | undefined),
-          "ngrok-skip-browser-warning": "true",
-        },
-      });
+      // No custom headers here. Ollama's CORS preflight only allows a fixed
+      // header list, and "ngrok-skip-browser-warning" is not on it — sending it
+      // makes the browser fail the preflight ("Failed to fetch"). The warning
+      // page only appears for HTML GETs, so an API call does not need it.
+      const direct = await fetch(url, init);
       if (!isInterstitial(direct) && direct.status !== 403) return direct;
       directError = direct.status === 403 ? "Ollama refused this page's origin (403)" : "the tunnel returned its browser warning page";
       // A 403 from Ollama means it refused this page's origin. The hosted relay
@@ -632,7 +630,7 @@ function mergePageExtractions(pages: ExtractedDoc[]): ExtractedDoc {
 }
 
 /** One page must come back within this window or the lane is freed. */
-const PAGE_DEADLINE_MS = 180_000;
+const PAGE_DEADLINE_MS = 420_000;
 
 async function readMediaBlock(
   base: string,
