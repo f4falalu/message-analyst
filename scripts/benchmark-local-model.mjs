@@ -137,7 +137,12 @@ async function readOne(model, image) {
       },
     ],
     response_format: { type: "json_object" },
-    stream: false,
+    // Must stream, for two reasons. Node's fetch aborts after 300s waiting for
+    // response headers, and a non-streaming request sends none until generation
+    // finishes: on a CPU-only host that reliably trips at exactly 5 minutes and
+    // surfaces as a bare "fetch failed". The app streams for the same reason,
+    // so this also keeps the benchmark representative of a real run.
+    stream: true,
   };
 
   const started = performance.now();
@@ -147,22 +152,75 @@ async function readOne(model, image) {
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
       body: JSON.stringify(body),
     });
-    const elapsed = (performance.now() - started) / 1000;
     if (!res.ok) {
+      const elapsed = (performance.now() - started) / 1000;
+      // ngrok answers with a full HTML error page. Dumping that at the user
+      // hides the one thing they need to know, which is that the tunnel died.
+      const ngrokError = res.headers.get("ngrok-error-code");
+      if (ngrokError === "ERR_NGROK_3200") {
+        return {
+          ok: false,
+          elapsed,
+          fatal: true,
+          error: "the ngrok tunnel is offline. Restart it and keep its terminal window open.",
+        };
+      }
+      if (ngrokError) return { ok: false, elapsed, fatal: true, error: `tunnel error ${ngrokError}.` };
       return { ok: false, elapsed, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 160)}` };
     }
-    const payload = await res.json();
-    const content = payload?.choices?.[0]?.message?.content ?? "";
-    const usage = payload?.usage ?? {};
+
+    // Reasoning models stream their thoughts into a separate field. Track it, so
+    // "produced 4,000 characters of reasoning and no answer" is reported as
+    // exactly that rather than as an empty response.
+    let content = "";
+    let reasoning = "";
+    let firstContentAt = null;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const json = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
+        if (!json || json === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(json);
+          const delta = chunk?.choices?.[0]?.delta ?? {};
+          const piece = delta.content ?? chunk?.message?.content ?? "";
+          if (piece) {
+            if (firstContentAt === null) firstContentAt = performance.now();
+            content += piece;
+          }
+          if (delta.reasoning) reasoning += delta.reasoning;
+        } catch {
+          // Keepalive or partial frame; malformed model output is handled below.
+        }
+      }
+    }
+
+    const elapsed = (performance.now() - started) / 1000;
+    if (!content && reasoning) {
+      return {
+        ok: false,
+        elapsed,
+        error:
+          `reasoned for ${reasoning.length} characters and returned no answer. ` +
+          `Use a non-reasoning build of this model (an "-instruct" tag).`,
+      };
+    }
     try {
-      const extracted = normalise(parseJsonLoose(content));
       return {
         ok: true,
         elapsed,
-        extracted,
+        extracted: normalise(parseJsonLoose(content)),
         kb: Math.round(bytes.length / 1024),
-        promptTokens: usage.prompt_tokens ?? null,
-        completionTokens: usage.completion_tokens ?? null,
+        firstTokenSeconds: firstContentAt === null ? null : (firstContentAt - started) / 1000,
       };
     } catch (error) {
       // Reached the model and got a reply, but not usable JSON. This is the
@@ -243,16 +301,27 @@ if (prepared.some((p) => p.resized)) {
 }
 
 const summaries = [];
+let fatal = null;
 for (const model of models) {
+  if (fatal) break;
   process.stdout.write(`\n${model}: `);
   const results = [];
   for (const image of prepared) {
     const result = await readOne(model, image);
     results.push(result);
     process.stdout.write(result.ok ? "\x1b[32m.\x1b[0m" : "\x1b[31mx\x1b[0m");
+    // No sense grinding through 30 documents against a dead tunnel.
+    if (result.fatal) {
+      fatal = result.error;
+      break;
+    }
   }
   console.log("");
   summaries.push(summarise(model, results));
+}
+
+if (fatal) {
+  console.log(`\n\x1b[31mStopped early: ${fatal}\x1b[0m`);
 }
 
 console.log("\n" + "─".repeat(64));

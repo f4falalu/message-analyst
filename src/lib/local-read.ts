@@ -117,7 +117,10 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
     // still exceed the hosted request lifetime, so translate a relay failure
     // into the actionable CORS instruction rather than a bare 502.
     try {
-      const relayed = await fetch(`/api/public/local-model-relay?target=${encodeURIComponent(url)}`, init);
+      const relayed = await fetch(
+        `/api/public/local-model-relay?target=${encodeURIComponent(url)}`,
+        init,
+      );
       if (relayed.ok || !isGenerationRequest) return relayed;
       if (relayed.status < 500) return relayed;
       throw new Error(`relay returned ${relayed.status}`);
@@ -129,13 +132,15 @@ async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> 
           "Set OLLAMA_ORIGINS=* as a system environment variable on the computer running Ollama, fully quit and reopen Ollama, then restart the ngrok tunnel",
       );
     }
-
   }
   const res = await fetch(url, init);
   if (!isInterstitial(res)) return res;
   const retry = await fetch(url, {
     ...init,
-    headers: { ...(init.headers as Record<string, string> | undefined), "ngrok-skip-browser-warning": "true" },
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      "ngrok-skip-browser-warning": "true",
+    },
   });
   if (isInterstitial(retry)) throw new TunnelInterstitialError(trimBase(url));
   return retry;
@@ -190,9 +195,6 @@ export async function listLocalModels(baseUrl: string): Promise<string[]> {
   return Array.from(new Set(ids));
 }
 
-
-
-
 /**
  * Model ids that can actually look at a scan. Text-only models silently return
  * nothing useful, so a run should never start on one.
@@ -222,10 +224,10 @@ export function isVisionModel(id: string): boolean {
  * llama.cpp serve the OpenAI surface only), so the caller knows to fall back to
  * the name heuristic instead of treating "no answer" as "not vision".
  */
-export async function fetchVisionCapability(
+export async function fetchModelCapabilities(
   baseUrl: string,
   model: string,
-): Promise<boolean | null> {
+): Promise<string[] | null> {
   const root = trimBase(baseUrl).replace(/\/v1$/, "");
   try {
     const res = await fetchApi(`${root}/api/show`, {
@@ -236,16 +238,34 @@ export async function fetchVisionCapability(
     if (!res.ok) return null;
     const payload = (await res.json()) as { capabilities?: unknown };
     if (!Array.isArray(payload.capabilities)) return null;
-    return payload.capabilities.some(
-      (entry) => typeof entry === "string" && entry.toLowerCase() === "vision",
-    );
+    return payload.capabilities
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.toLowerCase());
   } catch {
     return null;
   }
 }
 
+/** True/false from the endpoint, or null when it did not answer. */
+export async function fetchVisionCapability(
+  baseUrl: string,
+  model: string,
+): Promise<boolean | null> {
+  const capabilities = await fetchModelCapabilities(baseUrl, model);
+  return capabilities === null ? null : capabilities.includes("vision");
+}
+
 export type VisionResolution = {
   visionModels: string[];
+  /**
+   * Vision models that also reason before answering. Measured on a CPU-only
+   * host, qwen3-vl:2b spent 5,581 characters on reasoning and emitted zero
+   * content, so every document failed with "returned an empty response" after
+   * roughly six minutes of work. Ollama's OpenAI-compatible endpoint ignores
+   * both `think: false` and `chat_template_kwargs`, so the only real fix is a
+   * non-reasoning build (an `-instruct` tag). Worth warning about loudly.
+   */
+  thinkingModels: string[];
   /** True when at least one verdict came from the endpoint, not from a name. */
   authoritative: boolean;
 };
@@ -263,14 +283,18 @@ export async function resolveVisionModels(
   const verdicts = await Promise.all(
     models.map(async (model) => ({
       model,
-      reported: await fetchVisionCapability(baseUrl, model),
+      capabilities: await fetchModelCapabilities(baseUrl, model),
     })),
   );
+  const isVision = ({ model, capabilities }: (typeof verdicts)[number]) =>
+    capabilities === null ? isVisionModel(model) : capabilities.includes("vision");
+
   return {
-    visionModels: verdicts
-      .filter(({ model, reported }) => reported ?? isVisionModel(model))
+    visionModels: verdicts.filter(isVision).map(({ model }) => model),
+    thinkingModels: verdicts
+      .filter((entry) => isVision(entry) && (entry.capabilities?.includes("thinking") ?? false))
       .map(({ model }) => model),
-    authoritative: verdicts.some(({ reported }) => reported !== null),
+    authoritative: verdicts.some(({ capabilities }) => capabilities !== null),
   };
 }
 
@@ -278,7 +302,11 @@ export type EndpointCheck = {
   ok: boolean;
   models: string[];
   visionModels: string[];
+  /** Vision models that reason first. See VisionResolution.thinkingModels. */
+  thinkingModels: string[];
   detail: string;
+  /** Non-fatal problems worth showing before someone starts a long run. */
+  warnings: string[];
 };
 
 /**
@@ -298,31 +326,53 @@ export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck
       );
     }
     const payload = (await modelsResponse.json()) as { data?: { id?: string }[] };
-    const models = Array.from(new Set((payload.data ?? []).map((entry) => entry.id).filter((id): id is string => Boolean(id))));
+    const models = Array.from(
+      new Set(
+        (payload.data ?? []).map((entry) => entry.id).filter((id): id is string => Boolean(id)),
+      ),
+    );
     if (models.length === 0) {
       return {
         ok: false,
         models,
         visionModels: [],
+        thinkingModels: [],
+        warnings: [],
         detail: "Reachable, but it listed no models. Pull or load a vision model first.",
       };
     }
 
-    const { visionModels, authoritative } = await resolveVisionModels(base, models);
+    const { visionModels, thinkingModels, authoritative } = await resolveVisionModels(base, models);
     if (visionModels.length === 0) {
       return {
         ok: false,
         models,
         visionModels,
+        thinkingModels,
+        warnings: [],
         detail:
           `Reachable with ${models.length} model${models.length === 1 ? "" : "s"}, but none of them can read pictures. ` +
           `Pull a vision model before starting a run. On a CPU-only machine start with ${SUGGESTED_LOCAL_MODEL}.`,
       };
     }
+
+    // A reasoning model streams its thoughts into a separate field and can
+    // finish without ever emitting `content`, which this app reads. That looks
+    // like "the model returned an empty response" after minutes of work, per
+    // document, with no clue as to why. Say so before the run, not after.
+    const warnings = thinkingModels.map(
+      (model) =>
+        `"${model}" reasons before answering. It can spend its whole budget on reasoning and return no answer at all, ` +
+        `which this app sees as an empty response. Ollama's OpenAI-compatible endpoint ignores requests to turn that off, ` +
+        `so prefer a non-reasoning build such as "${model.replace(/:(.+)$/, ":$1-instruct")}".`,
+    );
+
     return {
       ok: true,
       models,
       visionModels,
+      thinkingModels,
+      warnings,
       detail:
         `Reachable: ${visionModels.length} vision-capable model${visionModels.length === 1 ? "" : "s"} of ${models.length} available ` +
         `(${visionModels.slice(0, 3).join(", ")})` +
@@ -335,6 +385,8 @@ export async function checkLocalEndpoint(baseUrl: string): Promise<EndpointCheck
       ok: false,
       models: [],
       visionModels: [],
+      thinkingModels: [],
+      warnings: [],
       detail: error instanceof Error ? error.message : "No response.",
     };
   }
@@ -401,7 +453,6 @@ export async function pullOllamaModel(
     wanted
   );
 }
-
 
 async function mediaBlocksFor(job: LocalJob): Promise<Record<string, unknown>[]> {
   const isPdf = (job.mimeType ?? "") === "application/pdf";
@@ -556,7 +607,10 @@ async function readMediaBlock(
   const raw = await response.text();
   let content = "";
   let responseModel = model;
-  const chunks = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  const chunks = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   for (const chunk of chunks) {
     const json = chunk.startsWith("data:") ? chunk.slice(5).trim() : chunk;
     if (!json || json === "[DONE]") continue;
