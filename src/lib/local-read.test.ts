@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchVisionCapability, isVisionModel, resolveVisionModels } from "./local-read";
+import {
+  fetchModelCapabilities,
+  fetchVisionCapability,
+  isVisionModel,
+  resolveVisionModels,
+} from "./local-read";
 import { PROVIDER_PRESETS, SUGGESTED_LOCAL_MODEL } from "./ai-models";
 
 const BASE = "http://localhost:11434/v1";
@@ -169,8 +174,79 @@ describe("resolveVisionModels", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await resolveVisionModels(BASE, []);
-    expect(result).toEqual({ visionModels: [], authoritative: false });
+    expect(result).toEqual({ visionModels: [], thinkingModels: [], authoritative: false });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// Measured against a real CPU-only host: qwen3-vl:2b reported
+// capabilities ["vision","completion","tools","thinking"], then spent ~5,500
+// characters on reasoning and emitted zero content, taking ~346s per document.
+// The app reads delta.content, so every document failed as "empty response".
+describe("resolveVisionModels flags reasoning models", () => {
+  it("marks a vision model that also reasons", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ capabilities: ["vision", "completion", "tools", "thinking"] }),
+        ),
+    );
+    const result = await resolveVisionModels(BASE, ["qwen3-vl:2b"]);
+    expect(result.visionModels).toEqual(["qwen3-vl:2b"]);
+    expect(result.thinkingModels).toEqual(["qwen3-vl:2b"]);
+  });
+
+  it("leaves a plain vision model unflagged", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ capabilities: ["vision", "completion"] })),
+    );
+    const result = await resolveVisionModels(BASE, ["qwen2.5vl:7b"]);
+    expect(result.visionModels).toEqual(["qwen2.5vl:7b"]);
+    expect(result.thinkingModels).toEqual([]);
+  });
+
+  it("does not flag a text-only reasoning model, which is excluded anyway", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ capabilities: ["completion", "thinking"] })),
+    );
+    const result = await resolveVisionModels(BASE, ["deepseek-r1:1.5b"]);
+    expect(result.visionModels).toEqual([]);
+    expect(result.thinkingModels).toEqual([]);
+  });
+
+  it("cannot flag anything when the endpoint does not report capabilities", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, 404)));
+    const result = await resolveVisionModels(BASE, ["qwen3-vl:2b"]);
+    expect(result.visionModels).toEqual(["qwen3-vl:2b"]);
+    expect(result.thinkingModels).toEqual([]);
+    expect(result.authoritative).toBe(false);
+  });
+});
+
+describe("fetchModelCapabilities", () => {
+  it("lower-cases and returns the reported list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ capabilities: ["Vision", "COMPLETION"] })),
+    );
+    await expect(fetchModelCapabilities(BASE, "m")).resolves.toEqual(["vision", "completion"]);
+  });
+
+  it("drops non-string entries rather than throwing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ capabilities: ["vision", 42, null] })),
+    );
+    await expect(fetchModelCapabilities(BASE, "m")).resolves.toEqual(["vision"]);
+  });
+
+  it("returns null when the endpoint does not implement /api/show", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, 404)));
+    await expect(fetchModelCapabilities(BASE, "m")).resolves.toBeNull();
   });
 });
 
